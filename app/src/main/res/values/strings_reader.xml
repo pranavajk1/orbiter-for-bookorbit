@@ -16,6 +16,10 @@
     <string name="reader_previous_chapter">Previous chapter</string>
     <string name="reader_next_chapter">Next chapter</string>
     <string name="reader_position">Position in book</string>
+    <string name="reader_back_to_page">Back to page %1$d</string>
+    <string name="reader_back_to_percent">Back to %1$d%%</string>
+    <string name="reader_forward_to_page">Forward to page %1$d</string>
+    <string name="reader_forward_to_percent">Forward to %1$d%%</string>
 
     <string name="rs_title">Reading settings</string>
     <string name="rs_page_color">Page colour</string>

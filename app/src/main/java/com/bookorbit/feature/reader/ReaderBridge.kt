@@ -64,6 +64,12 @@ sealed interface ReaderEvent {
         val chapterTitle: String?,
         val position: ReadingPosition = ReadingPosition(),
     ) : ReaderEvent
+    /** A goTo / goToFraction command has finished, and this is where it landed. */
+    data class Navigated(
+        val cfi: String?,
+        val fraction: Double?,
+        val position: ReadingPosition = ReadingPosition(),
+    ) : ReaderEvent
     data class Error(val message: String) : ReaderEvent
 
     /** A tap on the page body (not on a link or highlight). [x] is 0..1 across the viewport. */
@@ -169,6 +175,11 @@ object ReaderBridge {
                 cfi = obj["cfi"]?.jsonPrimitive?.contentOrNull,
                 fraction = obj["fraction"]?.jsonPrimitive?.doubleOrNull,
                 chapterTitle = obj["chapterTitle"]?.jsonPrimitive?.contentOrNull,
+                position = parsePosition(obj),
+            )
+            "navigated" -> ReaderEvent.Navigated(
+                cfi = obj["cfi"]?.jsonPrimitive?.contentOrNull,
+                fraction = obj["fraction"]?.jsonPrimitive?.doubleOrNull,
                 position = parsePosition(obj),
             )
             "error" -> ReaderEvent.Error(obj["message"]?.jsonPrimitive?.contentOrNull ?: "Reader error")

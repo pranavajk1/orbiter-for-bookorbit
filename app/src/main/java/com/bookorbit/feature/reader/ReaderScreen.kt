@@ -99,8 +99,8 @@ fun ReaderScreen(
     onTap.value = { x ->
         when {
             ui.toolbar != null -> vm.dismissToolbar()
-            ui.settings.flow == "paginated" && x < 0.3 -> controller.prev()
-            ui.settings.flow == "paginated" && x > 0.7 -> controller.next()
+            ui.settings.flow == "paginated" && x < PAGE_TURN_EDGE -> controller.prev()
+            ui.settings.flow == "paginated" && x > 1 - PAGE_TURN_EDGE -> controller.next()
             else -> chromeVisible = !chromeVisible
         }
     }
@@ -118,6 +118,7 @@ fun ReaderScreen(
                 is ReaderEvent.Ready -> ready = true
                 is ReaderEvent.Loaded -> vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
                 is ReaderEvent.Relocate -> vm.onRelocate(event.cfi, event.fraction, event.chapterTitle, event.position)
+                is ReaderEvent.Navigated -> vm.onNavigated(event.cfi, event.fraction, event.position)?.let(controller::goToFraction)
                 is ReaderEvent.Error -> vm.onError(event.message)
                 is ReaderEvent.Tap -> onTap.value(event.x)
                 is ReaderEvent.SearchResults -> vm.onSearchResults(event.label, event.hits)
@@ -219,7 +220,12 @@ fun ReaderScreen(
             sectionFractions = ui.sectionFractions,
             footer = footer,
             colors = chromeColors,
-            onSeek = controller::goToFraction,
+            returnPoint = ui.returnPoint,
+            onSeek = { f ->
+                vm.onScrubJump()
+                controller.goToFraction(f)
+            },
+            onReturn = { vm.takeReturnPoint()?.let(controller::goTo) },
             onPreviousChapter = { controller.goToSection((section - 1).coerceAtLeast(0)) },
             onNextChapter = { controller.goToSection(section + 1) },
             onCycleFooter = vm::cycleFooterMode,
@@ -414,9 +420,9 @@ private fun PagingHintOverlay(onDismiss: () -> Unit) {
             .background(Color(0xE60A0A0A))
             .clickable(interactionSource = interaction, indication = null, onClick = onDismiss),
     ) {
-        HintZone(weight = 0.3f, icon = Icons.Filled.ChevronLeft, label = stringResource(R.string.previous_page))
-        HintZone(weight = 0.4f, icon = Icons.Filled.TouchApp, label = stringResource(R.string.tap_for_menu))
-        HintZone(weight = 0.3f, icon = Icons.Filled.ChevronRight, label = stringResource(R.string.next_page))
+        HintZone(weight = PAGE_TURN_EDGE, icon = Icons.Filled.ChevronLeft, label = stringResource(R.string.previous_page))
+        HintZone(weight = 1 - 2 * PAGE_TURN_EDGE, icon = Icons.Filled.TouchApp, label = stringResource(R.string.tap_for_menu))
+        HintZone(weight = PAGE_TURN_EDGE, icon = Icons.Filled.ChevronRight, label = stringResource(R.string.next_page))
     }
 }
 

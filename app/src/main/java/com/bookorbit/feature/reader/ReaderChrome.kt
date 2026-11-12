@@ -7,19 +7,24 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SkipNext
@@ -42,6 +47,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -117,7 +123,9 @@ fun BoxScope.ReaderTopBar(
 
 /**
  * The bar along the bottom: the footer line (tap to change what it shows), and a scrubber with a
- * tick where each chapter starts, between previous- and next-chapter buttons.
+ * tick where each chapter starts, between previous- and next-chapter buttons. After a jump along
+ * the scrubber, a button above the bar goes back to where the reader was, and a dot on the
+ * scrubber marks that spot.
  */
 @Composable
 fun BoxScope.ReaderBottomBar(
@@ -126,7 +134,9 @@ fun BoxScope.ReaderBottomBar(
     sectionFractions: List<Double>,
     footer: Pair<String, String>,
     colors: ReaderChromeColors,
+    returnPoint: ReturnPoint?,
     onSeek: (Double) -> Unit,
+    onReturn: () -> Unit,
     onPreviousChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onCycleFooter: () -> Unit,
@@ -137,17 +147,60 @@ fun BoxScope.ReaderBottomBar(
         exit = fadeOut(Motion.exit()) + slideOutVertically(Motion.exit()) { it / 3 },
         modifier = Modifier.align(Alignment.BottomCenter),
     ) {
-        Column(Modifier.fillMaxWidth().background(colors.background)) {
-            HorizontalDivider(color = colors.hairline)
-            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp)) {
-                FooterLine(footer, colors, onCycleFooter, Modifier.padding(horizontal = 16.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ChromeIcon(Icons.Outlined.SkipPrevious, stringResource(R.string.reader_previous_chapter), colors, onPreviousChapter)
-                    Scrubber(fraction, sectionFractions, colors, onSeek, Modifier.weight(1f))
-                    ChromeIcon(Icons.Outlined.SkipNext, stringResource(R.string.reader_next_chapter), colors, onNextChapter)
+        Column(Modifier.fillMaxWidth()) {
+            // Kept while it fades out, so the label doesn't vanish before the button does.
+            var shown by remember { mutableStateOf(returnPoint) }
+            if (returnPoint != null) shown = returnPoint
+            AnimatedVisibility(
+                visible = returnPoint != null,
+                enter = fadeIn(Motion.enter()),
+                exit = fadeOut(Motion.exit()),
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                shown?.let { ReturnButton(it, colors, onReturn, Modifier.padding(bottom = 10.dp)) }
+            }
+            Column(Modifier.fillMaxWidth().background(colors.background)) {
+                HorizontalDivider(color = colors.hairline)
+                Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp)) {
+                    FooterLine(footer, colors, onCycleFooter, Modifier.padding(horizontal = 16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ChromeIcon(Icons.Outlined.SkipPrevious, stringResource(R.string.reader_previous_chapter), colors, onPreviousChapter)
+                        Scrubber(fraction, sectionFractions, returnPoint?.target?.fraction, colors, onSeek, Modifier.weight(1f))
+                        ChromeIcon(Icons.Outlined.SkipNext, stringResource(R.string.reader_next_chapter), colors, onNextChapter)
+                    }
                 }
             }
         }
+    }
+}
+
+/** "Back to page 42" (or "Forward to page 310", after going back), in the page's colours. */
+@Composable
+private fun ReturnButton(point: ReturnPoint, colors: ReaderChromeColors, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val spot = point.target
+    val label = when {
+        spot.pageTotal > 0 && point.back -> stringResource(R.string.reader_back_to_page, spot.page + 1)
+        spot.pageTotal > 0 -> stringResource(R.string.reader_forward_to_page, spot.page + 1)
+        point.back -> stringResource(R.string.reader_back_to_percent, (spot.fraction * 100).roundToInt())
+        else -> stringResource(R.string.reader_forward_to_percent, (spot.fraction * 100).roundToInt())
+    }
+    Row(
+        modifier
+            .clip(CircleShape)
+            .background(colors.background)
+            .border(1.dp, colors.content.copy(alpha = 0.25f), CircleShape)
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (point.back) Icons.AutoMirrored.Outlined.Undo else Icons.AutoMirrored.Outlined.Redo,
+            contentDescription = null,
+            tint = colors.content,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = colors.content)
     }
 }
 
@@ -193,6 +246,7 @@ private fun FooterLine(footer: Pair<String, String>, colors: ReaderChromeColors,
 private fun Scrubber(
     fraction: Double,
     sectionFractions: List<Double>,
+    returnFraction: Double?,
     colors: ReaderChromeColors,
     onSeek: (Double) -> Unit,
     modifier: Modifier = Modifier,
@@ -221,6 +275,12 @@ private fun Scrubber(
                     sectionFractions.drop(1).forEach { f ->
                         val x = f.toFloat().coerceIn(0f, 1f) * size.width
                         drawLine(colors.content.copy(alpha = 0.45f), Offset(x, y - 4.dp.toPx()), Offset(x, y + 4.dp.toPx()), 1.dp.toPx())
+                    }
+                    // Where the reader was before the jump, as the return button's target.
+                    returnFraction?.let { f ->
+                        val x = f.toFloat().coerceIn(0f, 1f) * size.width
+                        drawCircle(colors.background, radius = 5.dp.toPx(), center = Offset(x, y))
+                        drawCircle(colors.content, radius = 4.dp.toPx(), center = Offset(x, y))
                     }
                 }
             },

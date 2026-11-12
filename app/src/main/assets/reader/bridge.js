@@ -620,25 +620,36 @@ function createView() {
     post({ type: 'annotationTap', cfi: e.detail?.value ?? null, rect: range ? viewportRect(range) : null });
   });
 
-  view.addEventListener('relocate', (e) => {
-    const d = e.detail ?? {};
-    post({
-      type: 'relocate',
-      cfi: d.cfi ?? null,
-      fraction: typeof d.fraction === 'number' ? d.fraction : null,
-      chapterTitle: d.tocItem?.label ?? null,
-      location: d.location ?? null,
-      // Spine section and minutes left (in it and in the book), for the footer modes.
-      section: d.section ?? null,
-      time: d.time ?? null,
-    });
-  });
+  view.addEventListener('relocate', (e) => post(locationMessage('relocate', e.detail ?? {})));
 
   view.addEventListener('error', (e) => {
     postError(e.detail?.message ?? 'Reader error');
   });
 
   return view;
+}
+
+/** Where the page is, as the host reads it, from foliate's relocate detail (or view.lastLocation). */
+function locationMessage(type, d) {
+  return {
+    type,
+    cfi: d.cfi ?? null,
+    fraction: typeof d.fraction === 'number' ? d.fraction : null,
+    chapterTitle: d.tocItem?.label ?? null,
+    location: d.location ?? null,
+    // Spine section and minutes left (in it and in the book), for the footer modes.
+    section: d.section ?? null,
+    time: d.time ?? null,
+  };
+}
+
+/**
+ * Sent once a goTo / goToFraction command has finished, with where it ended up. A jump can report
+ * a relocate or two on its way (the section drawn before it scrolls to the target), so the host
+ * waits for this to know where a jump really landed.
+ */
+function postNavigated() {
+  post(locationMessage('navigated', view?.lastLocation ?? {}));
 }
 
 /* ----------------------------------------------------- base64 -> bytes */
@@ -746,10 +757,12 @@ window.__readerCommand = (json) => {
   }
   switch (cmd.type) {
     case 'goTo':
-      void view.goTo(cmd.target).catch(() => {});
+      void view.goTo(cmd.target).catch(() => {}).finally(postNavigated);
       break;
     case 'goToFraction':
-      if (typeof view.goToFraction === 'function') view.goToFraction(cmd.value);
+      if (typeof view.goToFraction === 'function') {
+        void Promise.resolve(view.goToFraction(cmd.value)).catch(() => {}).finally(postNavigated);
+      }
       break;
     case 'prev':
       view.prev?.();

@@ -1,5 +1,6 @@
 package com.bookorbit.feature.reader.comic
 
+import com.bookorbit.feature.reader.PAGE_TURN_EDGE
 import com.bookorbit.ui.asString
 import androidx.compose.ui.res.stringResource
 import com.bookorbit.R
@@ -148,8 +149,8 @@ private fun androidx.compose.foundation.layout.BoxScope.ComicPages(
             onZoomChanged = { if (page == pagerState.currentPage) zoomed = it },
             onTap = { fraction ->
                 // Edge taps turn the page (mirrored when reading right to left); the middle shows the bars.
-                val forward = if (rtl) fraction < 0.3f else fraction > 0.7f
-                val backward = if (rtl) fraction > 0.7f else fraction < 0.3f
+                val forward = if (rtl) fraction < PAGE_TURN_EDGE else fraction > 1 - PAGE_TURN_EDGE
+                val backward = if (rtl) fraction > 1 - PAGE_TURN_EDGE else fraction < PAGE_TURN_EDGE
                 when {
                     forward -> scope.launch { if (pagerState.currentPage < ui.pageCount - 1) pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                     backward -> scope.launch { if (pagerState.currentPage > 0) pagerState.animateScrollToPage(pagerState.currentPage - 1) }

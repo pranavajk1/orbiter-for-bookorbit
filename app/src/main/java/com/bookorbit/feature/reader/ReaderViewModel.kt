@@ -118,6 +118,8 @@ class ReaderViewModel @Inject constructor(
         val toc: List<TocItem> = emptyList(),
         val chapterTitle: String? = null,
         val percentage: Int = 0,
+        /** The way back after a jump along the scrubber, while there is one. */
+        val returnPoint: ReturnPoint? = null,
         val loaded: Boolean = false,
         val showPagingHint: Boolean = false,
         val annotations: List<BookAnnotation> = emptyList(),
@@ -152,6 +154,14 @@ class ReaderViewModel @Inject constructor(
 
     /** Where the reader is now, so a bookmark can be dropped there. */
     private var currentCfi: String? = null
+    /** The exact fraction of the last relocate ([UiState.percentage] is rounded). */
+    private var currentFraction: Double = 0.0
+    /** Where a scrubber jump started, until the page says where it landed ([onNavigated]). */
+    private var pendingJumpFrom: BookSpot? = null
+    /** A return point being taken, until the page says where it led ([onNavigated]). */
+    private var pendingReturn: ReturnPoint? = null
+    /** Whether the return being taken has already been retried by its fraction. */
+    private var returnRetried = false
 
     init {
         load()
@@ -234,11 +244,62 @@ class ReaderViewModel @Inject constructor(
                 percentage = fraction?.let { f -> (f * 100).roundToInt() } ?: it.percentage,
             )
         }
+        // Ordinary paging may retire the return point. Mid-jump relocates are left to onNavigated:
+        // a jump can pass through a spot or two on its way, and those aren't where it landed.
+        if (cfi != null && pendingJumpFrom == null && pendingReturn == null) {
+            val here = BookSpot(cfi, fraction ?: currentFraction, position.location, position.locationTotal)
+            _ui.update { it.copy(returnPoint = JumpBack.settle(it.returnPoint, here, null, null)) }
+        }
         if (cfi != null) currentCfi = cfi
+        if (fraction != null) currentFraction = fraction
         if (cfi != null && fraction != null) {
             report(cfi, fraction * 100)
             sessions.onReadingProgress(fraction * 100)
         }
+    }
+
+    // --- the way back after a scrubber jump ---
+
+    /** Call just before jumping along the scrubber, so the page it lands on can offer the way back. */
+    fun onScrubJump() {
+        val cfi = currentCfi ?: return
+        val position = _ui.value.position
+        pendingReturn = null
+        pendingJumpFrom = JumpBack.origin(BookSpot(cfi, currentFraction, position.location, position.locationTotal), _ui.value.returnPoint)
+    }
+
+    /**
+     * A jump has finished at [cfi]: offer (or swap) the way back if it was a scrubber jump or a
+     * return. Returns a fraction to jump to instead when a return didn't get near its target: the
+     * page can fail to open a spot by its CFI (the book's first section, from a later one), and
+     * going by fraction gets there.
+     */
+    fun onNavigated(cfi: String?, fraction: Double?, position: ReadingPosition): Double? {
+        val jumpedFrom = pendingJumpFrom
+        val taken = pendingReturn
+        if (cfi == null || (jumpedFrom == null && taken == null)) {
+            pendingJumpFrom = null
+            pendingReturn = null
+            return null
+        }
+        val landed = BookSpot(cfi, fraction ?: currentFraction, position.location, position.locationTotal)
+        if (taken != null && !returnRetried && !JumpBack.near(landed, taken.target)) {
+            returnRetried = true
+            return taken.target.fraction
+        }
+        pendingJumpFrom = null
+        pendingReturn = null
+        _ui.update { it.copy(returnPoint = JumpBack.settle(it.returnPoint, landed, jumpedFrom, taken)) }
+        return null
+    }
+
+    /** Takes the way back (or forward again); returns the CFI to go to, or null if there is none. */
+    fun takeReturnPoint(): String? {
+        val point = _ui.value.returnPoint ?: return null
+        pendingJumpFrom = null
+        pendingReturn = point
+        returnRetried = false
+        return point.target.cfi
     }
 
     // --- in-book search ---
