@@ -168,8 +168,9 @@ fun ReaderScreen(
     LaunchedEffect(ready, resolved, rendererFailed) {
         if (ready && resolved != null && !opened && !rendererFailed) {
             opened = true
+            val initial = vm.openPosition() ?: resolved.initial
             withContext(Dispatchers.IO) {
-                controller.open(openParamsFor(resolved.ref, resolved.format, resolved.initial, ui.settings, ui.fontFaceCss, ui.pageTurn), context)
+                controller.open(openParamsFor(resolved.ref, resolved.format, initial, ui.settings, ui.fontFaceCss, ui.pageTurn), context)
             }
         }
     }

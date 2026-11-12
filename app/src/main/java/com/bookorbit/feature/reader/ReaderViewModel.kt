@@ -224,6 +224,17 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Where a new page should open the book: where the reader is now, once they've been anywhere
+     * (rotating the phone makes a new page, and the book would otherwise go back to where it was
+     * first opened), else where it was opened.
+     */
+    fun openPosition(): InitialProgress? {
+        val resolved = _ui.value.resolved ?: return null
+        val cfi = currentCfi ?: return resolved.initial
+        return InitialProgress(cfi, currentFraction)
+    }
+
     /** Keep the last reading position and reset page state before a fresh WebView is created. */
     fun onRendererGone() {
         _ui.update { state ->
