@@ -649,9 +649,40 @@ function locationMessage(type, d) {
  * Sent once a goTo / goToFraction command has finished, with where it ended up. A jump can report
  * a relocate or two on its way (the section drawn before it scrolls to the target), so the host
  * waits for this to know where a jump really landed.
+ *
+ * Nor is the jump quite done when the command is: the section it opened lays out again as its
+ * fonts and images come in, and that can carry the spot onto the next page. So this waits for the
+ * relocates to stop (NAVIGATED_QUIET_MS without one, NAVIGATED_MAX_MS at most). Only the latest
+ * jump reports: one started meanwhile takes over, and reports where it lands.
  */
+const NAVIGATED_QUIET_MS = 150;
+const NAVIGATED_MAX_MS = 1000;
+let navigatedWait = null;
+
 function postNavigated() {
-  post(locationMessage('navigated', view?.lastLocation ?? {}));
+  navigatedWait?.cancel();
+  const target = view;
+  let quiet = null;
+  const finish = () => {
+    wait.cancel();
+    post(locationMessage('navigated', view?.lastLocation ?? {}));
+  };
+  const onRelocate = () => {
+    clearTimeout(quiet);
+    quiet = setTimeout(finish, NAVIGATED_QUIET_MS);
+  };
+  const longest = setTimeout(finish, NAVIGATED_MAX_MS);
+  const wait = {
+    cancel() {
+      clearTimeout(quiet);
+      clearTimeout(longest);
+      target?.removeEventListener('relocate', onRelocate);
+      if (navigatedWait === wait) navigatedWait = null;
+    },
+  };
+  navigatedWait = wait;
+  target?.addEventListener('relocate', onRelocate);
+  onRelocate();
 }
 
 /* ----------------------------------------------------- base64 -> bytes */

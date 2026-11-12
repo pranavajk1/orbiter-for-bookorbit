@@ -566,7 +566,12 @@ export class Paginator extends HTMLElement {
     this.#footer = this.#root.getElementById('footer')
 
     this.#observer.observe(this.#container)
-    this.#container.addEventListener('scroll', () => this.dispatchEvent(new Event('scroll')))
+    this.#container.addEventListener('scroll', () => {
+      // Mid-turn into the next section, a scroll of the incoming one's own (a shorter section
+      // clamps it) mustn't take the outgoing one along.
+      this.#pinGhost()
+      this.dispatchEvent(new Event('scroll'))
+    })
     this.#container.addEventListener(
       'scroll',
       debounce(() => {
@@ -1366,15 +1371,32 @@ export class Paginator extends HTMLElement {
   #pinGhost() {
     const crossing = this.#crossing
     if (!crossing?.ghost) return
-    // On screen distances, in the container's own units (card mode draws it scaled down).
-    const scale = this.#card?.scale ?? 1
-    const pin = (el, rect) => {
-      el.style.translate = ''
-      const { left, top } = el.getBoundingClientRect()
-      el.style.translate = `${(rect.left - left) / scale}px ${(rect.top - top) / scale}px`
+    const { scrollLeft, scrollTop } = this.#container
+    if (!crossing.pin) {
+      // Pinned first from #freeze, before anything animates it: by measuring where it went when
+      // it left the flow, in the container's own units (card mode draws it scaled down).
+      const scale = this.#card?.scale ?? 1
+      const measure = (el, rect) => {
+        el.style.translate = ''
+        const { left, top } = el.getBoundingClientRect()
+        return [(rect.left - left) / scale, (rect.top - top) / scale]
+      }
+      crossing.pin = {
+        scrollLeft,
+        scrollTop,
+        ghost: measure(crossing.ghost, crossing.rect),
+        cards: crossing.ghostCards ? measure(crossing.ghostCards, crossing.cardsRect) : null,
+      }
     }
-    pin(crossing.ghost, crossing.rect)
-    if (crossing.ghostCards) pin(crossing.ghostCards, crossing.cardsRect)
+    // After that only the scroll moves it, so it's held by as much as the scroll has moved. (Not
+    // measured again: once #reveal slides it out, the measure would include the slide, and pinning
+    // to that would set it back by however far it had gone, apart from the incoming section.)
+    const { pin } = crossing
+    const dx = scrollLeft - pin.scrollLeft
+    const dy = scrollTop - pin.scrollTop
+    const hold = (el, [x, y]) => (el.style.translate = `${x + dx}px ${y + dy}px`)
+    hold(crossing.ghost, pin.ghost)
+    if (crossing.ghostCards) hold(crossing.ghostCards, pin.cards)
   }
   // Brings the incoming section in over the outgoing one, which #endCrossing then drops.
   async #reveal() {
