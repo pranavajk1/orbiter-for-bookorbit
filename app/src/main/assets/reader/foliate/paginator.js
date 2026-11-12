@@ -442,6 +442,11 @@ export class Paginator extends HTMLElement {
   // A page turn into the section beside this one: { edge }, and once the outgoing section is
   // pinned in place, { ghost, rect, from, fadeOut } too.
   #crossing = null
+  // The menu's view of the book as a strip of page cards (see setCardMode): { scale, size, rule, background }.
+  #card = null
+  #cardTimer = null
+  // Card mode to take up again once a turn into the next section has finished.
+  #cardResume = null
   #touchScrolled
   #lastVisibleRange
   constructor() {
@@ -518,6 +523,14 @@ export class Paginator extends HTMLElement {
             grid-column: 3 / 4;
             grid-row: 3;
             align-self: end;
+        }
+        /* Card mode: the page window scales down, and its padding (a page each side) lets the
+           pages beside it show as cards of their own. */
+        #container {
+            transition: transform 260ms cubic-bezier(0.2, 0, 0, 1);
+        }
+        #top.card :is(#header, #footer) {
+            visibility: hidden !important;
         }
         #header, #footer {
             display: grid;
@@ -623,7 +636,10 @@ export class Paginator extends HTMLElement {
 
     this.#mediaQueryListener = () => {
       if (!this.#view) return
-      this.#background.style.background = getBackground(this.#view.document)
+      const background = getBackground(this.#view.document)
+      if (this.#card) {
+        if (background) this.#card.background = background
+      } else this.#background.style.background = background
     }
     this.#mediaQuery.addEventListener('change', this.#mediaQueryListener)
   }
@@ -672,7 +688,10 @@ export class Paginator extends HTMLElement {
     }
     this.#view = new View({
       container: this,
-      onExpand: () => this.#scrollToAnchor(this.#anchor),
+      onExpand: () => {
+        this.#scrollToAnchor(this.#anchor)
+        this.#placeCardStrips()
+      },
     })
     this.#container.append(this.#view.element)
     return this.#view
@@ -684,9 +703,16 @@ export class Paginator extends HTMLElement {
 
     // set background to `doc` background
     // this is needed because the iframe does not fill the whole element
-    this.#background.style.background = background
+    // (card mode shows its surround there, and puts this back when it ends). A re-render passes
+    // no background: keep the one there is.
+    if (this.#card) {
+      if (background) this.#card.background = background
+    } else this.#background.style.background = background
 
-    const { width, height } = this.#container.getBoundingClientRect()
+    // In card mode the container is padded and scaled: measure the page as it is when reading.
+    const { width, height } = this.#card
+      ? { width: this.#card.readSize, height: this.#container.offsetHeight - 2 * this.#card.band }
+      : this.#container.getBoundingClientRect()
     const size = vertical ? height : width
 
     const style = getComputedStyle(this.#top)
@@ -749,10 +775,19 @@ export class Paginator extends HTMLElement {
     this.#header.replaceChildren(...heads)
     this.#footer.replaceChildren(...feet)
 
+    // Card mode keeps the reading column width, so every page breaks where it does when reading,
+    // but spaces the pages wider apart, so each card has a margin beside its text.
+    const card = this.#card
+    if (card) return { height, width: columnWidth + card.gap, margin, gap: card.gap, columnWidth }
     return { height, width, margin, gap, columnWidth }
   }
   render() {
     if (!this.#view) return
+    // Card mode lays out from the page's reading size (see #beforeRender), so a restyle can keep
+    // it. A new page size (a rotation) can't: drop it, lay out, and take it up again.
+    const card = this.#card
+    const cardOptions = card && Math.abs(this.#container.clientWidth - 2 * card.pad - card.readSize) > 1 ? card.options : null
+    if (cardOptions) this.#leaveCard(false, false)
     this.#view.render(
       this.#beforeRender({
         vertical: this.#vertical,
@@ -760,6 +795,7 @@ export class Paginator extends HTMLElement {
       }),
     )
     this.#scrollToAnchor(this.#anchor)
+    if (cardOptions) this.setCardMode(cardOptions)
   }
   get scrolled() {
     return this.getAttribute('flow') === 'scrolled'
@@ -773,10 +809,211 @@ export class Paginator extends HTMLElement {
     return this.#vertical ? (scrolled ? 'width' : 'height') : scrolled ? 'height' : 'width'
   }
   get size() {
+    // Card mode pads and scales the container; the page is still the size it was.
+    if (this.#card) return this.#card.size
     return this.#container.getBoundingClientRect()[this.sideProp]
   }
   get viewSize() {
+    // In card mode the page strip is drawn scaled, and mid-animation at that: use the width it was
+    // laid out at instead (expand() sets it in px).
+    if (this.#card) {
+      const laidOut = parseFloat(this.#view.element.style[this.sideProp])
+      if (laidOut > 0) return laidOut
+      return this.#view.element.getBoundingClientRect()[this.sideProp] / this.#card.scale
+    }
     return this.#view.element.getBoundingClientRect()[this.sideProp]
+  }
+  /** How far card mode has scaled the page down (1 outside it), for mapping taps. */
+  get cardScale() {
+    return this.#card?.scale ?? 1
+  }
+  /**
+   * Shows the book as a strip of page cards while the host's menu is open, as Kindle and Play Books
+   * do: the page scales down into the room between the host's bars ([top] and [bottom] CSS px
+   * kept clear), the pages either side show beside it, and a band of [background] between pages
+   * makes each one a card. Swipes leaf through them as page turns, so the strip slides. Pass null
+   * to read again. Horizontal, one-column, left-to-right paginated layouts only: anything else
+   * keeps the page as it is.
+   */
+  setCardMode(options) {
+    // Mid-turn into the next section, the outgoing one is pinned on screen: wait for it to go. And
+    // a book still opening has no page to show as a card yet: wait for its first section.
+    if (options && (this.#crossing || !this.#view)) {
+      this.#cardResume = options
+      return
+    }
+    this.#cardResume = null
+    const usable = options && this.#view && !this.scrolled && !this.#vertical && !this.#rtl
+    if (!usable) {
+      if (this.#card) this.#leaveCard(true)
+      return
+    }
+    const container = this.#container
+    if (!this.#card) {
+      const doc = this.#view.document
+      const style = doc ? getComputedStyle(doc.documentElement) : null
+      const columnWidth = parseFloat(style?.columnWidth)
+      const gap = parseFloat(style?.columnGap)
+      const readSize = this.size
+      // Not laid out in columns yet (the book is still opening): try again once a section shows.
+      // A spread (two columns to a page) would be split down the middle by the bands: that waits
+      // too, for a layout with one column to a page.
+      if (!(columnWidth > 0) || !(gap >= 0) || readSize > columnWidth * 1.5 + gap) {
+        this.#cardResume = options
+        return
+      }
+      // Each card keeps about the margin a page has beside its text when reading, and the cards
+      // stand a band apart.
+      const inner = Math.max(gap, 16)
+      const rule = Math.max(10, Math.round(gap * 0.6))
+      const cardGap = 2 * inner + rule
+      // The column is as wide as the page less its gap, exactly: that's what the layout uses
+      // (#beforeRender). The computed column-width is truncated to whole px, and a page spacing
+      // built on it drifts off the real pages a fraction of a px more on every page.
+      const size = readSize - gap + cardGap
+      const pad = Math.ceil(size)
+      // Above and below the text, each card carries on into the page's top and bottom margins.
+      const band = Math.round(this.#margin * 0.6)
+      const page = this.page
+      this.#card = { readSize, size, gap: cardGap, rule, band, pad, scale: 1, background: this.#background.style.background }
+      container.style.transition = 'none'
+      Object.assign(container.style, { margin: `-${band}px -${pad}px`, padding: `${band}px ${pad}px` })
+      // Wider apart, the pages move off centre by half the extra; this keeps them where they were.
+      container.style.transform = `translateX(${-(size - readSize) / 2}px)`
+      this.#top.classList.add('card')
+      this.#relayout(page)
+      void container.offsetWidth
+      container.style.transition = ''
+    }
+    const card = this.#card
+    card.options = options
+    const doc = this.#view.document
+    const { top = 0, bottom = 0, background = '#444' } = options
+    const { size } = card
+    const height = this.#top.clientHeight
+    const boxTop = container.offsetTop
+    const boxHeight = container.offsetHeight
+    const room = Math.max(height - top - bottom, height * 0.4)
+    const scale = Math.max(0.5, Math.min(0.86, room / boxHeight))
+    const shift = top + room / 2 - (boxTop + boxHeight / 2)
+    card.scale = scale
+    this.#background.style.background = background
+    this.#styleCardDoc(doc)
+    container.style.transform = `translateY(${shift}px) scale(${scale}) translateX(${-(size - card.readSize) / 2}px)`
+  }
+  // Lays the section out again (for card mode, or back from it) and stays on the same page: the
+  // column width doesn't change, so neither do the pages, only how far apart they stand. Scrolling
+  // to it again also resets the bounds a swipe is held to, which are in the old spacing.
+  #relayout(page) {
+    this.render()
+    this.#scrollToPage(page, 'anchor')
+  }
+  // The cards drawn over the current section's pages (see #placeCardStrips), if any.
+  get #cardLayer() {
+    return this.#container.querySelector(':scope > .card-margins')
+  }
+  // No text selection while leafing (a long press is a swipe here), and the cards drawn over the
+  // pages (see #placeCardStrips).
+  #styleCardDoc(doc) {
+    const card = this.#card
+    const root = doc?.documentElement
+    if (!card || !root) return
+    root.style.setProperty('-webkit-user-select', 'none', 'important')
+    // The pages on a layer of their own: a swipe then moves it instead of painting the scaled
+    // pages again on every frame.
+    if (this.#view?.element) this.#view.element.style.willChange = 'transform'
+    this.#placeCardStrips()
+  }
+  // The cards, drawn over the pages in plain blocks that scroll with them: each card carries on
+  // into the page's margins above and below the text (a block of the page's colour in the
+  // container's padding), and a band down each page boundary parts it from the next. All from the
+  // same positions, so the bands meet the margins cleanly. (Solid blocks on a layer of their own:
+  // a gradient, or one layer over all the pages, is repainted through every swipe.)
+  #placeCardStrips() {
+    const card = this.#card
+    const element = this.#view?.element
+    if (!card || !element) return
+    const pages = Math.round((parseFloat(element.style.width) - 2 * card.size) / card.size)
+    if (!(pages > 0)) return
+    const doc = this.#view.document
+    const bodyColor = doc ? getComputedStyle(doc.body).backgroundColor : ''
+    const color = bodyColor && bodyColor !== 'rgba(0, 0, 0, 0)' ? bodyColor : doc ? getComputedStyle(doc.documentElement).backgroundColor : '#fff'
+    let holder = this.#container.querySelector(':scope > .card-margins')
+    if (!holder) {
+      holder = document.createElement('div')
+      holder.className = 'card-margins'
+      // Above the pages, including a section's view added after it (a turn into the next one).
+      Object.assign(holder.style, { position: 'absolute', inset: '0', pointerEvents: 'none', willChange: 'transform', zIndex: '1' })
+      this.#container.append(holder)
+    }
+    const half = card.rule / 2
+    const blocks = []
+    for (let page = 0; page < pages; page++) {
+      // The section's pages start a blank page in from the view's edge, which starts at the padding.
+      const left = card.pad + card.size * (page + 1) + half
+      for (const edge of ['top', 'bottom']) {
+        const block = document.createElement('div')
+        Object.assign(block.style, {
+          position: 'absolute',
+          [edge]: '0',
+          left: `${left}px`,
+          width: `${card.size - card.rule}px`,
+          height: `${card.band}px`,
+          background: color,
+        })
+        blocks.push(block)
+      }
+    }
+    const band = card.options?.background ?? '#444'
+    for (let boundary = 0; boundary <= pages; boundary++) {
+      const block = document.createElement('div')
+      Object.assign(block.style, {
+        position: 'absolute',
+        top: '0',
+        bottom: '0',
+        left: `${card.pad + card.size * (boundary + 1) - half}px`,
+        width: `${card.rule}px`,
+        background: band,
+      })
+      blocks.push(block)
+    }
+    holder.replaceChildren(...blocks)
+    // Mid-turn into the next section its pages stay hidden until #reveal brings them in; so do
+    // their cards.
+    holder.style.opacity = this.#crossing && !this.#crossing.revealed ? '0' : ''
+  }
+  // Back to reading: [animate] scales the page back up first; [relayout] lays it out for reading
+  // again (render() does that itself when it's the one leaving).
+  #leaveCard(animate, relayout = true) {
+    const card = this.#card
+    if (!card) return
+    const container = this.#container
+    // Full size, still standing where card mode's wider spacing put it, until the layout goes back.
+    const resting = `translateX(${-(card.size - card.readSize) / 2}px)`
+    if (!animate) container.style.transition = 'none'
+    container.style.transform = resting
+    const finish = () => {
+      if (this.#card !== card) return
+      const page = this.page
+      this.#card = null
+      container.style.transition = 'none'
+      Object.assign(container.style, {
+        margin: '',
+        padding: '',
+        transform: '',
+      })
+      this.#container.querySelector(':scope > .card-margins')?.remove()
+      this.#top.classList.remove('card')
+      this.#background.style.background = card.background
+      this.#view?.document?.documentElement?.style.removeProperty('-webkit-user-select')
+      if (this.#view?.element) this.#view.element.style.willChange = ''
+      if (relayout && this.#view) this.#relayout(page)
+      void container.offsetWidth
+      container.style.transition = ''
+    }
+    clearTimeout(this.#cardTimer)
+    if (animate) this.#cardTimer = setTimeout(finish, 280)
+    else finish()
   }
   get start() {
     return Math.abs(this.#container[this.scrollProp])
@@ -807,7 +1044,9 @@ export class Paginator extends HTMLElement {
     const min = Math.abs(offset) - a
     const max = Math.abs(offset) + b
     const d = velocity * (this.#rtl ? -size : size)
-    const page = Math.floor(Math.max(min, Math.min(max, (start + end) / 2 + (isNaN(d) ? 0 : d))) / size)
+    // Scroll offsets come back rounded to device pixels, so a swipe clamped to the page boundary
+    // can land a hair short of it; don't let that round down to the page it started on.
+    const page = Math.floor(Math.max(min, Math.min(max, (start + end) / 2 + (isNaN(d) ? 0 : d))) / size + 1e-3)
 
     // Let go over the blank margin beside the text: the next section takes over from where the
     // finger left the page, rather than the page first settling on the blank.
@@ -877,7 +1116,9 @@ export class Paginator extends HTMLElement {
     this.#touchScrolled = true
     // Only a slide follows the finger; a fade or a plain turn waits for the swipe to end.
     if (this.#crossing || this.#pageTurn !== 'slide') return
-    this.scrollBy(dx, dy)
+    // In card mode the page is drawn smaller than the finger moves; keep it under the finger.
+    const scale = this.#card?.scale ?? 1
+    this.scrollBy(dx / scale, dy / scale)
   }
   #onTouchEnd() {
     this.#touchScrolled = false
@@ -950,13 +1191,21 @@ export class Paginator extends HTMLElement {
       const from = element[scrollProp]
       element[scrollProp] = offset
       // The page is in its new place already; a transform from where it was carries it there.
-      const slide = this.#play(view, [{ transform: this.#translate(element[scrollProp] - from) }, { transform: 'none' }], SLIDE_MS, EASE_OUT_QUAD)
-      await settled(slide)
+      const keyframes = [{ transform: this.#translate(element[scrollProp] - from) }, { transform: 'none' }]
+      const slide = this.#play(view, keyframes, SLIDE_MS, EASE_OUT_QUAD)
+      // The cards are drawn over the pages, so they move with them.
+      const cards = this.#card ? this.#cardLayer : null
+      const slideCards = cards ? this.#play(cards, keyframes, SLIDE_MS, EASE_OUT_QUAD) : null
+      await Promise.all([settled(slide), slideCards && settled(slideCards)])
       slide.cancel()
+      slideCards?.cancel()
     } else {
       element[scrollProp] = offset
       this.#pinGhost()
     }
+    // The pages were laid out again while the turn animated (card mode coming or going), and that
+    // put the page where it belongs; this turn's place and bounds are in the old spacing.
+    if (this.size !== size) return
     this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size]
     this.#afterScroll(reason)
   }
@@ -1061,9 +1310,11 @@ export class Paginator extends HTMLElement {
       )
       this.#view = view
     }
+    if (src && this.#card) this.#styleCardDoc(this.#view.document)
     await this.scrollToAnchor((typeof anchor === 'function' ? anchor(this.#view.document) : anchor) ?? 0, select)
     if (this.#crossing?.ghost) await this.#reveal()
     if (hasFocus) this.focusView()
+    if (this.#cardResume && !this.#crossing) this.setCardMode(this.#cardResume)
   }
   // Turns into the section beside this one (dir -1 before, 1 after). `edge` is the blank page on
   // that side of this section's text, which the incoming section's first page stands in for.
@@ -1096,34 +1347,67 @@ export class Paginator extends HTMLElement {
     crossing.from = (this.#rtl ? -1 : 1) * this.size * crossing.edge - this.#container[this.scrollProp]
     crossing.ghost = el
     crossing.rect = el.getBoundingClientRect()
+    // Its cards stay with it, pinned the same way; the incoming section gets cards of its own.
+    // Measured before the section leaves the flow: that shrinks the scroll, which moves them.
+    const cards = this.#card ? this.#cardLayer : null
+    if (cards) {
+      cards.className = ''
+      crossing.ghostCards = cards
+      crossing.cardsRect = cards.getBoundingClientRect()
+    }
     Object.assign(el.style, { position: 'absolute', insetBlockStart: '0', insetInlineStart: '0' })
     this.#pinGhost()
-    if (this.#pageTurn === 'fade') crossing.fadeOut = this.#play(el, [{ opacity: 1 }, { opacity: 0 }], FADE_OUT_MS)
+    if (this.#pageTurn === 'fade') {
+      crossing.fadeOut = this.#play(el, [{ opacity: 1 }, { opacity: 0 }], FADE_OUT_MS)
+      if (cards) this.#play(cards, [{ opacity: 1 }, { opacity: 0 }], FADE_OUT_MS)
+    }
   }
   // Holds the outgoing section still on screen while the container scrolls to the incoming one.
   #pinGhost() {
     const crossing = this.#crossing
     if (!crossing?.ghost) return
-    const el = crossing.ghost
-    el.style.translate = ''
-    const { left, top } = el.getBoundingClientRect()
-    el.style.translate = `${crossing.rect.left - left}px ${crossing.rect.top - top}px`
+    // On screen distances, in the container's own units (card mode draws it scaled down).
+    const scale = this.#card?.scale ?? 1
+    const pin = (el, rect) => {
+      el.style.translate = ''
+      const { left, top } = el.getBoundingClientRect()
+      el.style.translate = `${(rect.left - left) / scale}px ${(rect.top - top) / scale}px`
+    }
+    pin(crossing.ghost, crossing.rect)
+    if (crossing.ghostCards) pin(crossing.ghostCards, crossing.cardsRect)
   }
   // Brings the incoming section in over the outgoing one, which #endCrossing then drops.
   async #reveal() {
-    const { ghost, from, fadeOut } = this.#crossing
+    // The incoming section's layout can have moved the scroll on its own (a shorter section
+    // clamps it), which leaves the outgoing one off where it was: pin it again first.
+    this.#pinGhost()
+    const { ghost, ghostCards, from, fadeOut } = this.#crossing
     const incoming = this.#view.element
+    // The incoming section's cards come in with its pages, the outgoing one's go with its own.
+    const cards = this.#card ? this.#cardLayer : null
+    this.#crossing.revealed = true
     const turn = this.#pageTurn
     if (turn === 'slide') {
-      const slideIn = this.#play(incoming, [{ transform: this.#translate(from) }, { transform: 'none' }], SLIDE_MS, EASE_OUT_QUAD)
+      const inFrames = [{ transform: this.#translate(from) }, { transform: 'none' }]
+      const outFrames = [{ transform: 'none' }, { transform: this.#translate(-from) }]
+      const slideIn = this.#play(incoming, inFrames, SLIDE_MS, EASE_OUT_QUAD)
+      const cardsIn = cards ? this.#play(cards, inFrames, SLIDE_MS, EASE_OUT_QUAD) : null
       incoming.style.opacity = ''
-      const slideOut = this.#play(ghost, [{ transform: 'none' }, { transform: this.#translate(-from) }], SLIDE_MS, EASE_OUT_QUAD)
-      await Promise.all([settled(slideIn), settled(slideOut)])
+      if (cards) cards.style.opacity = ''
+      const slideOut = this.#play(ghost, outFrames, SLIDE_MS, EASE_OUT_QUAD)
+      if (ghostCards) this.#play(ghostCards, outFrames, SLIDE_MS, EASE_OUT_QUAD)
+      await Promise.all([settled(slideIn), settled(slideOut), cardsIn && settled(cardsIn)])
       slideIn.cancel()
+      cardsIn?.cancel()
     } else if (turn === 'fade') {
       await settled(fadeOut)
       const fadeIn = this.#play(incoming, [{ opacity: 0 }, { opacity: 1 }], FADE_IN_MS)
       incoming.style.opacity = ''
+      if (cards) {
+        cards.style.opacity = ''
+        const cardsIn = this.#play(cards, [{ opacity: 0 }, { opacity: 1 }], FADE_IN_MS)
+        settled(cardsIn).then(() => cardsIn.cancel())
+      }
       await settled(fadeIn)
       fadeIn.cancel()
     }
@@ -1131,6 +1415,13 @@ export class Paginator extends HTMLElement {
   #endCrossing() {
     const crossing = this.#crossing
     this.#crossing = null
+    if (this.#cardResume) queueMicrotask(() => this.#cardResume && this.setCardMode(this.#cardResume))
+    if (crossing?.ghostCards) {
+      for (const animation of crossing.ghostCards.getAnimations()) animation.cancel()
+      crossing.ghostCards.remove()
+    }
+    const cards = this.#cardLayer
+    if (cards) cards.style.opacity = ''
     if (!crossing?.ghost) return
     for (const animation of crossing.ghost.getAnimations()) animation.cancel()
     crossing.ghost.remove()
@@ -1252,7 +1543,14 @@ export class Paginator extends HTMLElement {
     } else $style.textContent = styles
 
     // NOTE: needs `requestAnimationFrame` in Chromium
-    requestAnimationFrame(() => (this.#background.style.background = getBackground(this.#view.document)))
+    // (card mode shows its surround there, and puts the page's background back when it ends)
+    requestAnimationFrame(() => {
+      if (!this.#view) return
+      const background = getBackground(this.#view.document)
+      if (this.#card) {
+        if (background) this.#card.background = background
+      } else this.#background.style.background = background
+    })
 
     // needed because the resize observer doesn't work in Firefox
     this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())

@@ -548,7 +548,9 @@ function attachDocHandlers(doc, index) {
     if (sel && !sel.isCollapsed) return;
     const frame = doc.defaultView?.frameElement;
     const left = frame ? frame.getBoundingClientRect().left : 0;
-    const x = (left + e.clientX) / window.innerWidth;
+    // In card mode the page is drawn scaled down: a tap on the card beside this one is near the edge.
+    const scale = view?.renderer?.cardScale ?? 1;
+    const x = (left + e.clientX * scale) / window.innerWidth;
     // Foliate's own click listener reports taps on highlights; give it a tick to run first.
     setTimeout(() => {
       if (performance.now() - lastAnnotationHitAt < 50) return;
@@ -704,13 +706,15 @@ async function openBook(meta, parts) {
     }
     if (!navigated && typeof meta.fraction === 'number' && meta.fraction > 0 && typeof view.goToFraction === 'function') {
       try {
-        view.goToFraction(meta.fraction);
+        await view.goToFraction(meta.fraction);
         navigated = true;
       } catch {
         navigated = false;
       }
     }
     if (!navigated) await view.goTo(0).catch(() => {});
+    // Where the book opened, once it has (it can relocate through a spot or two on the way).
+    postNavigated();
   } catch (e) {
     postError(e?.message ?? 'Failed to open book');
   }
@@ -766,6 +770,9 @@ window.__readerCommand = (json) => {
       break;
     case 'prev':
       view.prev?.();
+      break;
+    case 'cardMode':
+      view.renderer?.setCardMode?.(cmd.on ? { top: cmd.top, bottom: cmd.bottom, background: cmd.background } : null);
       break;
     case 'next':
       view.next?.();

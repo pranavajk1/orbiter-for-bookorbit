@@ -33,7 +33,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +67,8 @@ fun ReaderScreen(
     var opened by remember { mutableStateOf(false) }
     var rendererFailed by remember { mutableStateOf(false) }
     var chromeVisible by remember { mutableStateOf(true) }
+    var topBarHeight by remember { mutableIntStateOf(0) }
+    var bottomBarHeight by remember { mutableIntStateOf(0) }
     var tocVisible by remember { mutableStateOf(false) }
     var settingsVisible by remember { mutableStateOf(false) }
     var highlightsVisible by remember { mutableStateOf(false) }
@@ -173,6 +179,30 @@ fun ReaderScreen(
     val showChrome = chromeVisible
     val onSurface = themeForegroundColor(ui.settings.themeName, ui.settings.isDark)
 
+    // While the menu is up the book shows as a strip of page cards that a swipe leafs through, and
+    // page turns count as browsing, with a way back to where the menu was opened once they go more
+    // than a few pages. A selection's toolbar is anchored to the full-size page, so the cards open
+    // back up while it's showing.
+    val cardShown = showChrome && paginated && ui.loaded && ui.toolbar == null && !rendererFailed && ui.error == null
+    LaunchedEffect(cardShown) { if (cardShown) vm.startBrowsing() else vm.stopBrowsing() }
+    val density = LocalDensity.current
+    val surround = lerp(surface, onSurface, 0.16f)
+    LaunchedEffect(cardShown, topBarHeight, bottomBarHeight, surround) {
+        if (cardShown) {
+            // In CSS px: the bars, the return button's room above the bottom one, and a margin.
+            val margin = with(density) { CardMargin.toPx() }
+            val returnButton = with(density) { ReturnButtonRoom.toPx() }
+            controller.setCardMode(
+                on = true,
+                top = (topBarHeight + margin) / density.density,
+                bottom = (bottomBarHeight + returnButton + margin) / density.density,
+                background = String.format("#%06X", 0xFFFFFF and surround.toArgb()),
+            )
+        } else {
+            controller.setCardMode(false)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -213,6 +243,7 @@ fun ReaderScreen(
                 vm.loadUploadedFonts()
                 settingsVisible = true
             },
+            onHeight = { topBarHeight = it },
         )
         ReaderBottomBar(
             visible = showChrome && ui.loaded,
@@ -229,6 +260,7 @@ fun ReaderScreen(
             onPreviousChapter = { controller.goToSection((section - 1).coerceAtLeast(0)) },
             onNextChapter = { controller.goToSection(section + 1) },
             onCycleFooter = vm::cycleFooterMode,
+            onHeight = { bottomBarHeight = it },
         )
 
         ui.toolbar?.let { target ->
@@ -401,6 +433,10 @@ fun ReaderScreen(
 }
 
 private enum class Speech { OFF, PLAYING, PAUSED }
+
+/** Room kept clear around the page cards, and above the bottom bar for the return button. */
+private val CardMargin = 14.dp
+private val ReturnButtonRoom = 52.dp
 
 /** Copies book text; Android 13+ confirms on its own, older versions get a toast. */
 private fun copyToClipboard(context: android.content.Context, text: String) {

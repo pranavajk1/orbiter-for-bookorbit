@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -84,6 +85,7 @@ fun BoxScope.ReaderTopBar(
     onHighlights: () -> Unit,
     onContents: () -> Unit,
     onSettings: () -> Unit,
+    onHeight: (Int) -> Unit = {},
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -91,7 +93,7 @@ fun BoxScope.ReaderTopBar(
         exit = fadeOut(Motion.exit()) + slideOutVertically(Motion.exit()) { -it / 3 },
         modifier = Modifier.align(Alignment.TopCenter),
     ) {
-        Column(Modifier.fillMaxWidth().background(colors.background)) {
+        Column(Modifier.fillMaxWidth().background(colors.background).onSizeChanged { onHeight(it.height) }) {
             Row(
                 Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -140,6 +142,7 @@ fun BoxScope.ReaderBottomBar(
     onPreviousChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onCycleFooter: () -> Unit,
+    onHeight: (Int) -> Unit = {},
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -159,7 +162,7 @@ fun BoxScope.ReaderBottomBar(
             ) {
                 shown?.let { ReturnButton(it, colors, onReturn, Modifier.padding(bottom = 10.dp)) }
             }
-            Column(Modifier.fillMaxWidth().background(colors.background)) {
+            Column(Modifier.fillMaxWidth().background(colors.background).onSizeChanged { onHeight(it.height) }) {
                 HorizontalDivider(color = colors.hairline)
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp)) {
                     FooterLine(footer, colors, onCycleFooter, Modifier.padding(horizontal = 16.dp))
