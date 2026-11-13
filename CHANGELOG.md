@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.2.0...v0.2.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* smart scopes, the reading streak and the yearly goal work on BookOrbit server 3.7 and later ([195fa21](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/195fa21c90bb46f45bc891c973994947c6f41838))
+
 ## [0.2.0](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.1.1...v0.2.0) (2026-11-13)
 
 
