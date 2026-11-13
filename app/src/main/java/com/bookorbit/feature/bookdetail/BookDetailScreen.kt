@@ -198,6 +198,9 @@ fun BookDetailScreen(
 /** Wider than this, the cover and actions get their own column beside the details, as on the web. */
 private val TwoColumnWidth = 720.dp
 
+/** Below this the two-column layout is a phone on its side (see [BookDetailContent]). */
+private val ShortWindowHeight = 560.dp
+
 @Composable
 internal fun BookDetailContent(
     ui: BookDetailViewModel.UiState,
@@ -208,6 +211,11 @@ internal fun BookDetailContent(
     val book = ui.book
     val coverModel = book?.let { LocalBookAvailability.current.localCover(it.id) ?: imageUrls.cover(it.id) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        // A phone on its side is wide but short: the actions under a full-height cover would sit
+        // out of sight, so they go under the title instead, and the cover shrinks to the height
+        // there is.
+        val short = maxHeight < ShortWindowHeight
+        val coverHeight = if (short) (maxHeight - 72.dp).coerceIn(150.dp, 390.dp) else 390.dp
         if (maxWidth >= TwoColumnWidth) CoverBackdrop(coverModel, Modifier.fillMaxWidth().height(420.dp))
         when {
             ui.loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -227,21 +235,27 @@ internal fun BookDetailContent(
             }
             maxWidth >= TwoColumnWidth -> Row(Modifier.fillMaxSize()) {
                 Column(
-                    Modifier.width(300.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, bottom = 24.dp),
+                    Modifier
+                        .width(if (short) coverHeight * 2 / 3 + 48.dp else 300.dp)
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 8.dp, end = 8.dp, bottom = 24.dp),
                 ) {
                     BackButton(actions.onBack)
                     BookCover(
                         model = coverModel,
                         title = book.title,
                         elevated = true,
-                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(390.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(coverHeight),
                     )
-                    PrimaryActions(book, ui, download, actions, Modifier.padding(16.dp), stacked = true)
+                    if (!short) PrimaryActions(book, ui, download, actions, Modifier.padding(16.dp), stacked = true)
                 }
                 Column(
-                    Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 56.dp, end = 16.dp, bottom = 24.dp),
+                    Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState())
+                        .padding(top = if (short) 16.dp else 56.dp, end = 16.dp, bottom = 24.dp),
                 ) {
-                    TitleBlock(book, ui, actions, large = true, modifier = Modifier.padding(horizontal = 16.dp))
+                    TitleBlock(book, ui, actions, large = !short, modifier = Modifier.padding(horizontal = 16.dp))
+                    if (short) PrimaryActions(book, ui, download, actions, Modifier.padding(horizontal = 16.dp, vertical = 18.dp))
                     DetailTabs(book, ui, actions)
                 }
             }
