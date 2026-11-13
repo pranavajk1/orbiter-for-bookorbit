@@ -12,6 +12,7 @@
  * asset served by WebViewAssetLoader.
  */
 import './foliate/view.js';
+import * as CFI from './foliate/epubcfi.js';
 
 const container = document.getElementById('reader');
 
@@ -622,7 +623,7 @@ function createView() {
     post({ type: 'annotationTap', cfi: e.detail?.value ?? null, rect: range ? viewportRect(range) : null });
   });
 
-  view.addEventListener('relocate', (e) => post(locationMessage('relocate', e.detail ?? {})));
+  view.addEventListener('relocate', (e) => post(locationMessage('relocate', heldLocation(e.detail ?? {}))));
 
   view.addEventListener('error', (e) => {
     postError(e.detail?.message ?? 'Reader error');
@@ -659,13 +660,43 @@ const NAVIGATED_QUIET_MS = 150;
 const NAVIGATED_MAX_MS = 1000;
 let navigatedWait = null;
 
+/**
+ * The spot the book was opened at, while it's still on screen. A page starts a little before it,
+ * and reporting that start would move the saved place back: the next open (a rotation recreates
+ * the page) goes there, which in the other orientation's layout is a page earlier again, so
+ * turning the device back and forth walked back through the book. Reported in place of the page's
+ * own start until a page turn or a jump takes it off screen.
+ */
+let heldCfi = null;
+/** The book is still opening at [heldCfi]: it can relocate through a spot or two on the way there. */
+let heldOpening = false;
+
+/** The relocate detail [d], with the held spot as its place while the page still shows it. */
+function heldLocation(d) {
+  if (!heldCfi || !d.cfi) return d;
+  try {
+    const held = CFI.parse(heldCfi);
+    const at = held.start ? CFI.collapse(held) : held;
+    const page = CFI.parse(d.cfi);
+    if (CFI.compare(at, CFI.collapse(page)) >= 0 && CFI.compare(at, CFI.collapse(page, true)) <= 0) {
+      return { ...d, cfi: heldCfi };
+    }
+  } catch {
+    // Not comparable (a fixed-layout book, say): fall back to the page's own place.
+  }
+  if (!heldOpening) heldCfi = null;
+  return d;
+}
+
 function postNavigated() {
   navigatedWait?.cancel();
   const target = view;
   let quiet = null;
   const finish = () => {
     wait.cancel();
-    post(locationMessage('navigated', view?.lastLocation ?? {}));
+    // Wherever the book landed is where it opened.
+    heldOpening = false;
+    post(locationMessage('navigated', heldLocation(view?.lastLocation ?? {})));
   };
   const onRelocate = () => {
     clearTimeout(quiet);
@@ -729,9 +760,13 @@ async function openBook(meta, parts) {
     let navigated = false;
     if (meta.cfi) {
       try {
+        heldCfi = meta.cfi;
+        heldOpening = true;
         await view.goTo(meta.cfi);
         navigated = true;
       } catch {
+        heldCfi = null;
+        heldOpening = false;
         navigated = false;
       }
     }

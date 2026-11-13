@@ -66,8 +66,9 @@ fun ReaderScreen(
     val controller = remember { ReaderController() }
     var ready by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf(false) }
-    // This page has the book open. Not ui.loaded: the view model outlives a rotation, so that's
-    // already true while the new page is still opening it, and card mode sent then is lost.
+    // This page has the book open at its place. Not ui.loaded: the view model outlives a rotation,
+    // so that's already true while the new page is still opening it; card mode sent then is lost,
+    // and leafing would start from wherever the book stood before it got to its place.
     var bookShown by remember { mutableStateOf(false) }
     var rendererFailed by remember { mutableStateOf(false) }
     // Kept through a rotation: the menu (and the page cards under it) stays as the reader left it.
@@ -127,12 +128,13 @@ fun ReaderScreen(
         controller.listener = { event ->
             when (event) {
                 is ReaderEvent.Ready -> ready = true
-                is ReaderEvent.Loaded -> {
-                    bookShown = true
-                    vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
-                }
+                is ReaderEvent.Loaded -> vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
                 is ReaderEvent.Relocate -> vm.onRelocate(event.cfi, event.fraction, event.chapterTitle, event.position)
-                is ReaderEvent.Navigated -> vm.onNavigated(event.cfi, event.fraction, event.position)?.let(controller::goToFraction)
+                is ReaderEvent.Navigated -> {
+                    vm.onNavigated(event.cfi, event.fraction, event.position)?.let(controller::goToFraction)
+                    // The first one is the book landing where it opened.
+                    bookShown = true
+                }
                 is ReaderEvent.Error -> vm.onError(event.message)
                 is ReaderEvent.Tap -> onTap.value(event.x)
                 is ReaderEvent.SearchResults -> vm.onSearchResults(event.label, event.hits)
