@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bookorbit.core.model.ReadingGoalWidget
 import com.bookorbit.core.model.ReadingStreakWidget
+import com.bookorbit.core.model.ReadingWidgets
 import com.bookorbit.core.model.SourceDistribution
 import com.bookorbit.core.model.UserDailyReading
 import com.bookorbit.core.model.UserStatsSummary
+import com.bookorbit.core.model.WidgetBatchRequest
 import com.bookorbit.core.network.ApiService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +27,7 @@ private const val SOURCE_DAYS = 365
 @HiltViewModel
 class StatsViewModel @Inject constructor(
     private val api: ApiService,
+    private val json: Json,
 ) : ViewModel() {
 
     data class UiState(
@@ -50,18 +54,20 @@ class StatsViewModel @Inject constructor(
         viewModelScope.launch {
             // Each section loads on its own: an older server may lack some, and that shouldn't blank the rest.
             val summary = async { runCatching { api.getUserStatsSummary() }.getOrNull() }
-            val streak = async { runCatching { api.getReadingStreak() }.getOrNull() }
-            val goal = async { runCatching { api.getReadingGoal() }.getOrNull() }
+            val widgets = async {
+                runCatching { ReadingWidgets.from(json, api.getDashboardWidgets(WidgetBatchRequest.READING)) }.getOrDefault(ReadingWidgets())
+            }
             val daily = async { runCatching { api.getDailyReading(HEATMAP_DAYS) }.getOrNull() }
             val sources = async { runCatching { api.getReadingSources(SOURCE_DAYS) }.getOrNull() }
 
             val s = summary.await()
             val dailyList = daily.await()
+            val reading = widgets.await()
             val state = UiState(
                 loading = false,
                 summary = s,
-                streak = streak.await(),
-                goal = goal.await(),
+                streak = reading.streak,
+                goal = reading.goal,
                 daily = dailyList?.let(::fillDays).orEmpty(),
                 sources = sources.await(),
             )

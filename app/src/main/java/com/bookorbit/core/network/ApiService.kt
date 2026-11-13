@@ -306,12 +306,15 @@ interface ApiService {
     @GET("smart-scopes")
     suspend fun getSmartScopes(): List<SmartScope>
 
-    @GET("smart-scopes/{id}/books")
-    suspend fun getSmartScopeBooks(
+    /**
+     * A smart scope's books. `GET smart-scopes/{id}/books` runs this same query, but server 3.7+ lets
+     * only the official BookOrbit app call it (App Attest); this route is the web client's and open
+     * to any signed-in client. An empty [BookQuery.sort] keeps the scope's own sort.
+     */
+    @POST("smart-scopes/{id}/books/query")
+    suspend fun querySmartScopeBooks(
         @Path("id") id: Int,
-        @Query("page") page: Int = 0,
-        @Query("size") size: Int = 50,
-        @Query("q") q: String? = null,
+        @Body query: BookQuery,
     ): BooksPage
 
     // --- Authors ---
@@ -374,11 +377,11 @@ interface ApiService {
     @GET("user-statistics/reading-source-distribution")
     suspend fun getReadingSources(@Query("days") days: Int): com.bookorbit.core.model.SourceDistribution
 
-    @GET("dashboard/widgets/reading-streak")
-    suspend fun getReadingStreak(): com.bookorbit.core.model.ReadingStreakWidget
-
-    @GET("dashboard/widgets/reading-goal")
-    suspend fun getReadingGoal(): com.bookorbit.core.model.ReadingGoalWidget
+    /** Dashboard widgets by type; see [com.bookorbit.core.model.WidgetBatchRequest] for why not the per-widget GETs. */
+    @POST("dashboard/widgets/batch")
+    suspend fun getDashboardWidgets(
+        @Body body: com.bookorbit.core.model.WidgetBatchRequest,
+    ): com.bookorbit.core.model.WidgetBatchResponse
 
     // --- Book Dock (staging / ingest review) ---
     @GET("book-dock/files")
