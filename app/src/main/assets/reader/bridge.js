@@ -12,6 +12,7 @@
  * asset served by WebViewAssetLoader.
  */
 import './foliate/view.js';
+import * as CFI from './foliate/epubcfi.js';
 
 const container = document.getElementById('reader');
 
@@ -548,7 +549,9 @@ function attachDocHandlers(doc, index) {
     if (sel && !sel.isCollapsed) return;
     const frame = doc.defaultView?.frameElement;
     const left = frame ? frame.getBoundingClientRect().left : 0;
-    const x = (left + e.clientX) / window.innerWidth;
+    // In card mode the page is drawn scaled down: a tap on the card beside this one is near the edge.
+    const scale = view?.renderer?.cardScale ?? 1;
+    const x = (left + e.clientX * scale) / window.innerWidth;
     // Foliate's own click listener reports taps on highlights; give it a tick to run first.
     setTimeout(() => {
       if (performance.now() - lastAnnotationHitAt < 50) return;
@@ -620,25 +623,97 @@ function createView() {
     post({ type: 'annotationTap', cfi: e.detail?.value ?? null, rect: range ? viewportRect(range) : null });
   });
 
-  view.addEventListener('relocate', (e) => {
-    const d = e.detail ?? {};
-    post({
-      type: 'relocate',
-      cfi: d.cfi ?? null,
-      fraction: typeof d.fraction === 'number' ? d.fraction : null,
-      chapterTitle: d.tocItem?.label ?? null,
-      location: d.location ?? null,
-      // Spine section and minutes left (in it and in the book), for the footer modes.
-      section: d.section ?? null,
-      time: d.time ?? null,
-    });
-  });
+  view.addEventListener('relocate', (e) => post(locationMessage('relocate', heldLocation(e.detail ?? {}))));
 
   view.addEventListener('error', (e) => {
     postError(e.detail?.message ?? 'Reader error');
   });
 
   return view;
+}
+
+/** Where the page is, as the host reads it, from foliate's relocate detail (or view.lastLocation). */
+function locationMessage(type, d) {
+  return {
+    type,
+    cfi: d.cfi ?? null,
+    fraction: typeof d.fraction === 'number' ? d.fraction : null,
+    chapterTitle: d.tocItem?.label ?? null,
+    location: d.location ?? null,
+    // Spine section and minutes left (in it and in the book), for the footer modes.
+    section: d.section ?? null,
+    time: d.time ?? null,
+  };
+}
+
+/**
+ * Sent once a goTo / goToFraction command has finished, with where it ended up. A jump can report
+ * a relocate or two on its way (the section drawn before it scrolls to the target), so the host
+ * waits for this to know where a jump really landed.
+ *
+ * Nor is the jump quite done when the command is: the section it opened lays out again as its
+ * fonts and images come in, and that can carry the spot onto the next page. So this waits for the
+ * relocates to stop (NAVIGATED_QUIET_MS without one, NAVIGATED_MAX_MS at most). Only the latest
+ * jump reports: one started meanwhile takes over, and reports where it lands.
+ */
+const NAVIGATED_QUIET_MS = 150;
+const NAVIGATED_MAX_MS = 1000;
+let navigatedWait = null;
+
+/**
+ * The spot the book was opened at, while it's still on screen. A page starts a little before it,
+ * and reporting that start would move the saved place back: the next open (a rotation recreates
+ * the page) goes there, which in the other orientation's layout is a page earlier again, so
+ * turning the device back and forth walked back through the book. Reported in place of the page's
+ * own start until a page turn or a jump takes it off screen.
+ */
+let heldCfi = null;
+/** The book is still opening at [heldCfi]: it can relocate through a spot or two on the way there. */
+let heldOpening = false;
+
+/** The relocate detail [d], with the held spot as its place while the page still shows it. */
+function heldLocation(d) {
+  if (!heldCfi || !d.cfi) return d;
+  try {
+    const held = CFI.parse(heldCfi);
+    const at = held.start ? CFI.collapse(held) : held;
+    const page = CFI.parse(d.cfi);
+    if (CFI.compare(at, CFI.collapse(page)) >= 0 && CFI.compare(at, CFI.collapse(page, true)) <= 0) {
+      return { ...d, cfi: heldCfi };
+    }
+  } catch {
+    // Not comparable (a fixed-layout book, say): fall back to the page's own place.
+  }
+  if (!heldOpening) heldCfi = null;
+  return d;
+}
+
+function postNavigated() {
+  navigatedWait?.cancel();
+  const target = view;
+  let quiet = null;
+  const finish = () => {
+    wait.cancel();
+    // Wherever the book landed is where it opened.
+    heldOpening = false;
+    post(locationMessage('navigated', heldLocation(view?.lastLocation ?? {})));
+  };
+  const onRelocate = () => {
+    clearTimeout(quiet);
+    quiet = setTimeout(finish, NAVIGATED_QUIET_MS);
+  };
+  const longest = setTimeout(finish, NAVIGATED_MAX_MS);
+  const wait = {
+    cancel() {
+      clearTimeout(quiet);
+      clearTimeout(longest);
+      target?.removeEventListener('relocate', onRelocate);
+      if (navigatedWait === wait) navigatedWait = null;
+    },
+  };
+  navigatedWait = wait;
+  target?.addEventListener('relocate', onRelocate);
+  onRelocate();
 }
 
 /* ----------------------------------------------------- base64 -> bytes */
@@ -685,21 +760,27 @@ async function openBook(meta, parts) {
     let navigated = false;
     if (meta.cfi) {
       try {
+        heldCfi = meta.cfi;
+        heldOpening = true;
         await view.goTo(meta.cfi);
         navigated = true;
       } catch {
+        heldCfi = null;
+        heldOpening = false;
         navigated = false;
       }
     }
     if (!navigated && typeof meta.fraction === 'number' && meta.fraction > 0 && typeof view.goToFraction === 'function') {
       try {
-        view.goToFraction(meta.fraction);
+        await view.goToFraction(meta.fraction);
         navigated = true;
       } catch {
         navigated = false;
       }
     }
     if (!navigated) await view.goTo(0).catch(() => {});
+    // Where the book opened, once it has (it can relocate through a spot or two on the way).
+    postNavigated();
   } catch (e) {
     postError(e?.message ?? 'Failed to open book');
   }
@@ -746,13 +827,18 @@ window.__readerCommand = (json) => {
   }
   switch (cmd.type) {
     case 'goTo':
-      void view.goTo(cmd.target).catch(() => {});
+      void view.goTo(cmd.target).catch(() => {}).finally(postNavigated);
       break;
     case 'goToFraction':
-      if (typeof view.goToFraction === 'function') view.goToFraction(cmd.value);
+      if (typeof view.goToFraction === 'function') {
+        void Promise.resolve(view.goToFraction(cmd.value)).catch(() => {}).finally(postNavigated);
+      }
       break;
     case 'prev':
       view.prev?.();
+      break;
+    case 'cardMode':
+      view.renderer?.setCardMode?.(cmd.on ? { top: cmd.top, bottom: cmd.bottom, background: cmd.background } : null);
       break;
     case 'next':
       view.next?.();

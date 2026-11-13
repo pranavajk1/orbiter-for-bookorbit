@@ -38,6 +38,9 @@ import com.bookorbit.ui.components.readableWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,7 +48,11 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bookorbit.R
 import com.bookorbit.core.model.BookCard
@@ -65,6 +72,7 @@ import com.bookorbit.ui.components.PanelShape
 import com.bookorbit.ui.components.PrimaryButton
 import com.bookorbit.ui.theme.BookOrbitTheme
 import java.time.LocalTime
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** Home: greeting, the book to pick up next, streak and goal, then the shelves. */
@@ -208,14 +216,40 @@ private fun HomeHeader(greeting: String, userName: String, onOpenProfile: () -> 
     }
 }
 
+/**
+ * The greeting for the hour it is now. Home can stay composed for hours (in the back stack, or with
+ * the app in the background), so the hour is read again each time Home comes to the front and on
+ * every hour boundary while it stays there, rather than once when Home was first drawn.
+ */
 @Composable
-private fun greeting(): String = stringResource(
-    when (LocalTime.now().hour) {
-        in 5..11 -> R.string.home_good_morning
-        in 12..17 -> R.string.home_good_afternoon
-        else -> R.string.home_good_evening
-    },
-)
+private fun greeting(): String {
+    var hour by remember { mutableIntStateOf(LocalTime.now().hour) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val now = LocalTime.now()
+                hour = now.hour
+                delay(millisToNextHour(now))
+            }
+        }
+    }
+    return stringResource(greetingFor(hour))
+}
+
+/** Morning from 5, afternoon from noon, evening from 6 pm through the small hours. */
+@StringRes
+internal fun greetingFor(hour: Int): Int = when (hour) {
+    in 5..11 -> R.string.home_good_morning
+    in 12..17 -> R.string.home_good_afternoon
+    else -> R.string.home_good_evening
+}
+
+/** How long until the clock next reaches the top of an hour, at least a second. */
+internal fun millisToNextHour(now: LocalTime): Long {
+    val intoHour = (now.toSecondOfDay() % 3600) * 1000L + now.nano / 1_000_000
+    return (3_600_000L - intoHour).coerceAtLeast(1000L)
+}
 
 /** Streak and yearly goal side by side; each hides itself if the server doesn't provide it. */
 @Composable

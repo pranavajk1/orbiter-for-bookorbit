@@ -33,8 +33,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,8 +66,15 @@ fun ReaderScreen(
     val controller = remember { ReaderController() }
     var ready by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf(false) }
+    // This page has the book open at its place. Not ui.loaded: the view model outlives a rotation,
+    // so that's already true while the new page is still opening it; card mode sent then is lost,
+    // and leafing would start from wherever the book stood before it got to its place.
+    var bookShown by remember { mutableStateOf(false) }
     var rendererFailed by remember { mutableStateOf(false) }
-    var chromeVisible by remember { mutableStateOf(true) }
+    // Kept through a rotation: the menu (and the page cards under it) stays as the reader left it.
+    var chromeVisible by rememberSaveable { mutableStateOf(true) }
+    var topBarHeight by remember { mutableIntStateOf(0) }
+    var bottomBarHeight by remember { mutableIntStateOf(0) }
     var tocVisible by remember { mutableStateOf(false) }
     var settingsVisible by remember { mutableStateOf(false) }
     var highlightsVisible by remember { mutableStateOf(false) }
@@ -99,8 +111,8 @@ fun ReaderScreen(
     onTap.value = { x ->
         when {
             ui.toolbar != null -> vm.dismissToolbar()
-            ui.settings.flow == "paginated" && x < 0.3 -> controller.prev()
-            ui.settings.flow == "paginated" && x > 0.7 -> controller.next()
+            ui.settings.flow == "paginated" && x < PAGE_TURN_EDGE -> controller.prev()
+            ui.settings.flow == "paginated" && x > 1 - PAGE_TURN_EDGE -> controller.next()
             else -> chromeVisible = !chromeVisible
         }
     }
@@ -118,6 +130,11 @@ fun ReaderScreen(
                 is ReaderEvent.Ready -> ready = true
                 is ReaderEvent.Loaded -> vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
                 is ReaderEvent.Relocate -> vm.onRelocate(event.cfi, event.fraction, event.chapterTitle, event.position)
+                is ReaderEvent.Navigated -> {
+                    vm.onNavigated(event.cfi, event.fraction, event.position)?.let(controller::goToFraction)
+                    // The first one is the book landing where it opened.
+                    bookShown = true
+                }
                 is ReaderEvent.Error -> vm.onError(event.message)
                 is ReaderEvent.Tap -> onTap.value(event.x)
                 is ReaderEvent.SearchResults -> vm.onSearchResults(event.label, event.hits)
@@ -161,8 +178,9 @@ fun ReaderScreen(
     LaunchedEffect(ready, resolved, rendererFailed) {
         if (ready && resolved != null && !opened && !rendererFailed) {
             opened = true
+            val initial = vm.openPosition() ?: resolved.initial
             withContext(Dispatchers.IO) {
-                controller.open(openParamsFor(resolved.ref, resolved.format, resolved.initial, ui.settings, ui.fontFaceCss, ui.pageTurn), context)
+                controller.open(openParamsFor(resolved.ref, resolved.format, initial, ui.settings, ui.fontFaceCss, ui.pageTurn), context)
             }
         }
     }
@@ -171,6 +189,30 @@ fun ReaderScreen(
     val paginated = ui.settings.flow == "paginated"
     val showChrome = chromeVisible
     val onSurface = themeForegroundColor(ui.settings.themeName, ui.settings.isDark)
+
+    // While the menu is up the book shows as a strip of page cards that a swipe leafs through, and
+    // page turns count as browsing, with a way back to where the menu was opened once they go more
+    // than a few pages. A selection's toolbar is anchored to the full-size page, so the cards open
+    // back up while it's showing.
+    val cardShown = showChrome && paginated && ui.loaded && bookShown && ui.toolbar == null && !rendererFailed && ui.error == null
+    LaunchedEffect(cardShown) { if (cardShown) vm.startBrowsing() else vm.stopBrowsing() }
+    val density = LocalDensity.current
+    val surround = lerp(surface, onSurface, 0.16f)
+    LaunchedEffect(cardShown, topBarHeight, bottomBarHeight, surround) {
+        if (cardShown) {
+            // In CSS px: the bars, the return button's room above the bottom one, and a margin.
+            val margin = with(density) { CardMargin.toPx() }
+            val returnButton = with(density) { ReturnButtonRoom.toPx() }
+            controller.setCardMode(
+                on = true,
+                top = (topBarHeight + margin) / density.density,
+                bottom = (bottomBarHeight + returnButton + margin) / density.density,
+                background = String.format("#%06X", 0xFFFFFF and surround.toArgb()),
+            )
+        } else {
+            controller.setCardMode(false)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -212,6 +254,7 @@ fun ReaderScreen(
                 vm.loadUploadedFonts()
                 settingsVisible = true
             },
+            onHeight = { topBarHeight = it },
         )
         ReaderBottomBar(
             visible = showChrome && ui.loaded,
@@ -219,10 +262,16 @@ fun ReaderScreen(
             sectionFractions = ui.sectionFractions,
             footer = footer,
             colors = chromeColors,
-            onSeek = controller::goToFraction,
+            returnPoint = ui.returnPoint,
+            onSeek = { f ->
+                vm.onScrubJump()
+                controller.goToFraction(f)
+            },
+            onReturn = { vm.takeReturnPoint()?.let(controller::goTo) },
             onPreviousChapter = { controller.goToSection((section - 1).coerceAtLeast(0)) },
             onNextChapter = { controller.goToSection(section + 1) },
             onCycleFooter = vm::cycleFooterMode,
+            onHeight = { bottomBarHeight = it },
         )
 
         ui.toolbar?.let { target ->
@@ -297,6 +346,7 @@ fun ReaderScreen(
                 Button(onClick = {
                     ready = false
                     opened = false
+                    bookShown = false
                     rendererFailed = false
                 }) { Text(stringResource(R.string.retry)) }
                 Button(onClick = onBack) { Text(stringResource(R.string.back)) }
@@ -396,6 +446,10 @@ fun ReaderScreen(
 
 private enum class Speech { OFF, PLAYING, PAUSED }
 
+/** Room kept clear around the page cards, and above the bottom bar for the return button. */
+private val CardMargin = 14.dp
+private val ReturnButtonRoom = 52.dp
+
 /** Copies book text; Android 13+ confirms on its own, older versions get a toast. */
 private fun copyToClipboard(context: android.content.Context, text: String) {
     val clipboard = context.getSystemService(android.content.ClipboardManager::class.java) ?: return
@@ -414,9 +468,9 @@ private fun PagingHintOverlay(onDismiss: () -> Unit) {
             .background(Color(0xE60A0A0A))
             .clickable(interactionSource = interaction, indication = null, onClick = onDismiss),
     ) {
-        HintZone(weight = 0.3f, icon = Icons.Filled.ChevronLeft, label = stringResource(R.string.previous_page))
-        HintZone(weight = 0.4f, icon = Icons.Filled.TouchApp, label = stringResource(R.string.tap_for_menu))
-        HintZone(weight = 0.3f, icon = Icons.Filled.ChevronRight, label = stringResource(R.string.next_page))
+        HintZone(weight = PAGE_TURN_EDGE, icon = Icons.Filled.ChevronLeft, label = stringResource(R.string.previous_page))
+        HintZone(weight = 1 - 2 * PAGE_TURN_EDGE, icon = Icons.Filled.TouchApp, label = stringResource(R.string.tap_for_menu))
+        HintZone(weight = PAGE_TURN_EDGE, icon = Icons.Filled.ChevronRight, label = stringResource(R.string.next_page))
     }
 }
 

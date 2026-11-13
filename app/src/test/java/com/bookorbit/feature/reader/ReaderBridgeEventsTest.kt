@@ -30,6 +30,17 @@ class ReaderBridgeEventsTest {
     }
 
     @Test
+    fun `parses where a jump landed`() {
+        val e = ReaderBridge.parseEvent(
+            """{"type":"navigated","cfi":"epubcfi(/6/14!/4/2)","fraction":0.48,"location":{"current":290,"next":291,"total":614}}""",
+        ) as ReaderEvent.Navigated
+        assertEquals("epubcfi(/6/14!/4/2)", e.cfi)
+        assertEquals(0.48, e.fraction!!, 0.0)
+        assertEquals(290, e.position.location)
+        assertEquals(614, e.position.locationTotal)
+    }
+
+    @Test
     fun `parses selection cleared and annotation tap`() {
         assertTrue(ReaderBridge.parseEvent("""{"type":"selectionCleared"}""") === ReaderEvent.SelectionCleared)
         val tap = ReaderBridge.parseEvent("""{"type":"annotationTap","cfi":"epubcfi(/6/2)","rect":null}""") as ReaderEvent.AnnotationTap

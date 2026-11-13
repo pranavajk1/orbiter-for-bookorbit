@@ -92,6 +92,20 @@ class ReaderController {
     fun next() = command(buildJsonObject { put("type", "next") }.toString())
     fun prev() = command(buildJsonObject { put("type", "prev") }.toString())
 
+    /**
+     * Shows the book as a strip of page cards ([on]), fitted between [top] and [bottom] CSS px
+     * kept clear for the bars, on [background] (a CSS colour); or reads again.
+     */
+    fun setCardMode(on: Boolean, top: Float = 0f, bottom: Float = 0f, background: String = "") = command(
+        buildJsonObject {
+            put("type", "cardMode")
+            put("on", on)
+            put("top", top)
+            put("bottom", bottom)
+            put("background", background)
+        }.toString(),
+    )
+
     /** Replace the set of highlights drawn in the page. Only CFI-anchored, resolvable ones are drawn. */
     fun setAnnotations(items: List<BookAnnotation>) {
         val arr = kotlinx.serialization.json.buildJsonArray {

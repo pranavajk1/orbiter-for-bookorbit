@@ -118,6 +118,8 @@ class ReaderViewModel @Inject constructor(
         val toc: List<TocItem> = emptyList(),
         val chapterTitle: String? = null,
         val percentage: Int = 0,
+        /** The way back after a jump along the scrubber, while there is one. */
+        val returnPoint: ReturnPoint? = null,
         val loaded: Boolean = false,
         val showPagingHint: Boolean = false,
         val annotations: List<BookAnnotation> = emptyList(),
@@ -152,6 +154,19 @@ class ReaderViewModel @Inject constructor(
 
     /** Where the reader is now, so a bookmark can be dropped there. */
     private var currentCfi: String? = null
+    /** The exact fraction of the last relocate ([UiState.percentage] is rounded). */
+    private var currentFraction: Double = 0.0
+    /** Where a scrubber jump started, until the page says where it landed ([onNavigated]). */
+    private var pendingJumpFrom: BookSpot? = null
+    /** A return point being taken, until the page says where it led ([onNavigated]). */
+    private var pendingReturn: ReturnPoint? = null
+    /** Whether the return being taken has already been retried by its fraction. */
+    private var returnRetried = false
+    /** While leafing through pages with the menu open: where it started, and the return point then. */
+    private var browseFrom: BookSpot? = null
+    private var browseBase: ReturnPoint? = null
+    /** Leafing asked for before the book had a place to start from (the menu is up as it opens). */
+    private var browseWanted = false
 
     init {
         load()
@@ -209,6 +224,17 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Where a new page should open the book: where the reader is now, once they've been anywhere
+     * (rotating the phone makes a new page, and the book would otherwise go back to where it was
+     * first opened), else where it was opened.
+     */
+    fun openPosition(): InitialProgress? {
+        val resolved = _ui.value.resolved ?: return null
+        val cfi = currentCfi ?: return resolved.initial
+        return InitialProgress(cfi, currentFraction)
+    }
+
     /** Keep the last reading position and reset page state before a fresh WebView is created. */
     fun onRendererGone() {
         _ui.update { state ->
@@ -234,11 +260,102 @@ class ReaderViewModel @Inject constructor(
                 percentage = fraction?.let { f -> (f * 100).roundToInt() } ?: it.percentage,
             )
         }
+        // Ordinary paging may retire the return point. Mid-jump relocates are left to onNavigated:
+        // a jump can pass through a spot or two on its way, and those aren't where it landed.
+        // Leafing with the menu open counts as one jump from where it started.
+        if (cfi != null && pendingJumpFrom == null && pendingReturn == null) {
+            val here = BookSpot(cfi, fraction ?: currentFraction, position.location, position.locationTotal)
+            val from = browseFrom
+            _ui.update {
+                it.copy(
+                    returnPoint = if (from != null) {
+                        JumpBack.settle(browseBase, here, from, null)
+                    } else {
+                        JumpBack.settle(it.returnPoint, here, null, null)
+                    },
+                )
+            }
+        }
         if (cfi != null) currentCfi = cfi
+        if (fraction != null) currentFraction = fraction
         if (cfi != null && fraction != null) {
             report(cfi, fraction * 100)
             sessions.onReadingProgress(fraction * 100)
         }
+    }
+
+    // --- the way back after a scrubber jump ---
+
+    /** Call just before jumping along the scrubber, so the page it lands on can offer the way back. */
+    fun onScrubJump() {
+        val cfi = currentCfi ?: return
+        val position = _ui.value.position
+        pendingReturn = null
+        pendingJumpFrom = JumpBack.origin(BookSpot(cfi, currentFraction, position.location, position.locationTotal), _ui.value.returnPoint)
+    }
+
+    /**
+     * A jump has finished at [cfi]: offer (or swap) the way back if it was a scrubber jump or a
+     * return. Returns a fraction to jump to instead when a return didn't get near its target: the
+     * page can fail to open a spot by its CFI (the book's first section, from a later one), and
+     * going by fraction gets there.
+     */
+    fun onNavigated(cfi: String?, fraction: Double?, position: ReadingPosition): Double? {
+        val jumpedFrom = pendingJumpFrom
+        val taken = pendingReturn
+        if (cfi == null || (jumpedFrom == null && taken == null)) {
+            pendingJumpFrom = null
+            pendingReturn = null
+            // The book has opened: leafing asked for while it opened starts from here.
+            if (cfi != null && browseWanted && browseFrom == null) {
+                browseBase = _ui.value.returnPoint
+                browseFrom = JumpBack.origin(BookSpot(cfi, fraction ?: currentFraction, position.location, position.locationTotal), browseBase)
+            }
+            return null
+        }
+        val landed = BookSpot(cfi, fraction ?: currentFraction, position.location, position.locationTotal)
+        if (taken != null && !returnRetried && !JumpBack.near(landed, taken.target)) {
+            returnRetried = true
+            return taken.target.fraction
+        }
+        pendingJumpFrom = null
+        pendingReturn = null
+        val point = JumpBack.settle(_ui.value.returnPoint, landed, jumpedFrom, taken)
+        _ui.update { it.copy(returnPoint = point) }
+        // Still leafing: carry on from here, against the point as it now stands.
+        if (browseFrom != null) {
+            browseBase = point
+            browseFrom = JumpBack.origin(landed, point)
+        }
+        return null
+    }
+
+    /**
+     * The menu is up, over the page cards: page turns from here on are leafing through. Before the
+     * book has a place (it's still opening), leafing starts where it opens (see [onNavigated]).
+     */
+    fun startBrowsing() {
+        browseWanted = true
+        val cfi = currentCfi ?: return
+        val position = _ui.value.position
+        browseBase = _ui.value.returnPoint
+        browseFrom = JumpBack.origin(BookSpot(cfi, currentFraction, position.location, position.locationTotal), browseBase)
+    }
+
+    /** The card closed: page turns are reading again. */
+    fun stopBrowsing() {
+        browseWanted = false
+        browseFrom = null
+        browseBase = null
+    }
+
+    /** Takes the way back (or forward again); returns the CFI to go to, or null if there is none. */
+    fun takeReturnPoint(): String? {
+        val point = _ui.value.returnPoint ?: return null
+        pendingJumpFrom = null
+        pendingReturn = point
+        returnRetried = false
+        return point.target.cfi
     }
 
     // --- in-book search ---
