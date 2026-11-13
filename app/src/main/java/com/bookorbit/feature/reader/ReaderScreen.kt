@@ -66,6 +66,9 @@ fun ReaderScreen(
     val controller = remember { ReaderController() }
     var ready by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf(false) }
+    // This page has the book open. Not ui.loaded: the view model outlives a rotation, so that's
+    // already true while the new page is still opening it, and card mode sent then is lost.
+    var bookShown by remember { mutableStateOf(false) }
     var rendererFailed by remember { mutableStateOf(false) }
     // Kept through a rotation: the menu (and the page cards under it) stays as the reader left it.
     var chromeVisible by rememberSaveable { mutableStateOf(true) }
@@ -124,7 +127,10 @@ fun ReaderScreen(
         controller.listener = { event ->
             when (event) {
                 is ReaderEvent.Ready -> ready = true
-                is ReaderEvent.Loaded -> vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
+                is ReaderEvent.Loaded -> {
+                    bookShown = true
+                    vm.onLoaded(event.toc, event.title, event.sectionFractions, event.language)
+                }
                 is ReaderEvent.Relocate -> vm.onRelocate(event.cfi, event.fraction, event.chapterTitle, event.position)
                 is ReaderEvent.Navigated -> vm.onNavigated(event.cfi, event.fraction, event.position)?.let(controller::goToFraction)
                 is ReaderEvent.Error -> vm.onError(event.message)
@@ -186,7 +192,7 @@ fun ReaderScreen(
     // page turns count as browsing, with a way back to where the menu was opened once they go more
     // than a few pages. A selection's toolbar is anchored to the full-size page, so the cards open
     // back up while it's showing.
-    val cardShown = showChrome && paginated && ui.loaded && ui.toolbar == null && !rendererFailed && ui.error == null
+    val cardShown = showChrome && paginated && ui.loaded && bookShown && ui.toolbar == null && !rendererFailed && ui.error == null
     LaunchedEffect(cardShown) { if (cardShown) vm.startBrowsing() else vm.stopBrowsing() }
     val density = LocalDensity.current
     val surround = lerp(surface, onSurface, 0.16f)
@@ -338,6 +344,7 @@ fun ReaderScreen(
                 Button(onClick = {
                     ready = false
                     opened = false
+                    bookShown = false
                     rendererFailed = false
                 }) { Text(stringResource(R.string.retry)) }
                 Button(onClick = onBack) { Text(stringResource(R.string.back)) }

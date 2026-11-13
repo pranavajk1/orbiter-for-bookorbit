@@ -801,8 +801,7 @@ export class Paginator extends HTMLElement {
     )
     this.#scrollToAnchor(this.#anchor)
     if (cardOptions) this.setCardMode(cardOptions)
-    // Card mode put off for a layout that can't take it (a spread, in landscape) takes it up once
-    // the page is laid out in one that can (back in portrait).
+    // Card mode put off until the page was laid out in columns takes it up now that it is.
     else if (this.#cardResume && !this.#card && !this.#crossing) this.setCardMode(this.#cardResume)
   }
   get scrolled() {
@@ -840,7 +839,7 @@ export class Paginator extends HTMLElement {
    * do: the page scales down into the room between the host's bars ([top] and [bottom] CSS px
    * kept clear), the pages either side show beside it, and a band of [background] between pages
    * makes each one a card. Swipes leaf through them as page turns, so the strip slides. Pass null
-   * to read again. Horizontal, one-column, left-to-right paginated layouts only: anything else
+   * to read again. Horizontal, left-to-right paginated layouts only (a spread shows each of its columns as a card): anything else
    * keeps the page as it is.
    */
   setCardMode(options) {
@@ -864,32 +863,34 @@ export class Paginator extends HTMLElement {
       const gap = parseFloat(style?.columnGap)
       const readSize = this.size
       // Not laid out in columns yet (the book is still opening): try again once a section shows.
-      // A spread (two columns to a page) would be split down the middle by the bands: that waits
-      // too, for a layout with one column to a page.
-      if (!(columnWidth > 0) || !(gap >= 0) || readSize > columnWidth * 1.5 + gap) {
+      if (!(columnWidth > 0) || !(gap >= 0)) {
         this.#cardResume = options
         return
       }
+      // Columns to a page: two in a spread (landscape), where each column is a page of its own
+      // and becomes a card of its own.
+      const columns = Math.max(1, Math.round(readSize / (columnWidth + gap)))
       // Each card keeps about the margin a page has beside its text when reading, and the cards
       // stand a band apart.
       const inner = Math.max(gap, 16)
       const rule = Math.max(10, Math.round(gap * 0.6))
       const cardGap = 2 * inner + rule
-      // The column is as wide as the page less its gap, exactly: that's what the layout uses
+      // The column is as wide as its share of the page less its gap, exactly: that's what the layout uses
       // (#beforeRender). The computed column-width is truncated to whole px, and a page spacing
       // built on it drifts off the real pages a fraction of a px more on every page.
-      const size = readSize - gap + cardGap
+      const size = readSize / columns - gap + cardGap
       const pad = Math.ceil(size)
       // Above and below the text, each card carries on into the page's top and bottom margins.
       const band = Math.round(this.#margin * 0.6)
       const page = this.page
-      this.#card = { readSize, size, gap: cardGap, rule, band, pad, scale: 1, background: this.#background.style.background }
+      this.#card = { readSize, columns, size, gap: cardGap, rule, band, pad, scale: 1, background: this.#background.style.background }
       container.style.transition = 'none'
       Object.assign(container.style, { margin: `-${band}px -${pad}px`, padding: `${band}px ${pad}px` })
       // Wider apart, the pages move off centre by half the extra; this keeps them where they were.
       container.style.transform = `translateX(${-(size - readSize) / 2}px)`
       this.#top.classList.add('card')
-      this.#relayout(page)
+      // A spread's first column is its first card.
+      this.#relayout(page > 0 ? 1 + (page - 1) * columns : page)
       void container.offsetWidth
       container.style.transition = ''
     }
@@ -1002,7 +1003,8 @@ export class Paginator extends HTMLElement {
     container.style.transform = resting
     const finish = () => {
       if (this.#card !== card) return
-      const page = this.page
+      // Back to the spread the card is in.
+      const page = this.page > 0 ? 1 + Math.floor((this.page - 1) / card.columns) : this.page
       this.#card = null
       container.style.transition = 'none'
       Object.assign(container.style, {
