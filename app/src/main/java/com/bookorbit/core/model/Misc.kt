@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -18,7 +19,7 @@ data class AppInfo(
 @Serializable
 data class NamedResult(val name: String? = null)
 
-/** `GET /dashboard/widgets/reading-streak`. */
+/** The `reading-streak` dashboard widget. */
 @Serializable
 data class ReadingStreakWidget(
     val currentStreak: Int = 0,
@@ -26,13 +27,55 @@ data class ReadingStreakWidget(
     val lastSevenDays: List<Boolean> = emptyList(),
 )
 
-/** `GET /dashboard/widgets/reading-goal`. [goalBooks] is null until the user sets a yearly goal. */
+/** The `reading-goal` dashboard widget. [goalBooks] is null until the user sets a yearly goal. */
 @Serializable
 data class ReadingGoalWidget(
     val goalBooks: Int? = null,
     val completedBooks: Int = 0,
     val year: Int = 0,
 )
+
+/**
+ * `POST /dashboard/widgets/batch` body. The app asks for its widgets here rather than at
+ * `GET /dashboard/widgets/{type}`: server 3.7+ lets only the official BookOrbit app use those (App
+ * Attest), while the batch route, which the web dashboard uses, is open to any signed-in client.
+ */
+@Serializable
+data class WidgetBatchRequest(val widgets: List<String>) {
+    companion object {
+        const val READING_STREAK = "reading-streak"
+        const val READING_GOAL = "reading-goal"
+        val READING = WidgetBatchRequest(listOf(READING_STREAK, READING_GOAL))
+    }
+}
+
+/** One widget of a [WidgetBatchResponse]; [data] is null, and [failed] true, when that widget errored. */
+@Serializable
+data class WidgetBatchItem(
+    val type: String,
+    val data: JsonElement? = null,
+    val failed: Boolean = false,
+)
+
+@Serializable
+data class WidgetBatchResponse(val items: List<WidgetBatchItem> = emptyList())
+
+/** The streak and yearly goal, each null when the server couldn't provide it. */
+data class ReadingWidgets(
+    val streak: ReadingStreakWidget? = null,
+    val goal: ReadingGoalWidget? = null,
+) {
+    companion object {
+        fun from(json: Json, response: WidgetBatchResponse): ReadingWidgets {
+            fun data(type: String): JsonElement? =
+                response.items.firstOrNull { it.type == type && !it.failed }?.data?.takeUnless { it is JsonNull }
+            return ReadingWidgets(
+                streak = data(WidgetBatchRequest.READING_STREAK)?.let { runCatching { json.decodeFromJsonElement(ReadingStreakWidget.serializer(), it) }.getOrNull() },
+                goal = data(WidgetBatchRequest.READING_GOAL)?.let { runCatching { json.decodeFromJsonElement(ReadingGoalWidget.serializer(), it) }.getOrNull() },
+            )
+        }
+    }
+}
 
 /** Scroller types accepted by `GET /dashboard/scrollers/:type`. */
 object ScrollerType {

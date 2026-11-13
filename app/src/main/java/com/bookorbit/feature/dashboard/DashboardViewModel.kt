@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.bookorbit.core.model.BookCard
 import com.bookorbit.core.model.ReadingGoalWidget
 import com.bookorbit.core.model.ReadingStreakWidget
+import com.bookorbit.core.model.ReadingWidgets
 import com.bookorbit.core.model.ScrollerType
 import com.bookorbit.core.network.Connectivity
 import com.bookorbit.feature.browse.BrowseRepository
@@ -85,8 +86,7 @@ class DashboardViewModel @Inject constructor(
                     }
                     .getOrDefault(emptyList())
 
-            val streak = async { runCatching { repo.readingStreak() }.getOrNull() }
-            val goal = async { runCatching { repo.readingGoal() }.getOrNull() }
+            val widgets = async { runCatching { repo.readingWidgets() }.getOrDefault(ReadingWidgets()) }
             val continueReading = async { load(ScrollerType.CONTINUE_READING) }
             val continueListening = async { load(ScrollerType.CONTINUE_LISTENING) }
             val recentlyAdded = async { load(ScrollerType.RECENTLY_ADDED) }
@@ -94,6 +94,7 @@ class DashboardViewModel @Inject constructor(
             val listening = continueListening.await()
             val recent = recentlyAdded.await()
             val offline = connectivity.offline.value
+            val stats = widgets.await()
             _ui.update {
                 it.copy(
                     continueReading = reading,
@@ -102,8 +103,8 @@ class DashboardViewModel @Inject constructor(
                     loading = false,
                     error = failures == 3 && !offline,
                     offline = offline,
-                    streak = streak.await(),
-                    goal = goal.await(),
+                    streak = stats.streak,
+                    goal = stats.goal,
                 )
             }
         }
