@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.1.1...v0.2.0) (2026-11-13)
+
+
+### Features
+
+* **reader:** a way back after a jump along the scrubber, like Kindle's ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+* **reader:** leaf through pages as a strip of cards while the menu is open, in portrait and landscape ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+
+
+### Bug Fixes
+
+* **book:** keep Read in reach on a phone held sideways ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+* **home:** the greeting follows the time of day ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+* **reader:** keep the reading place when the device rotates ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+* **reader:** page-turn taps only near the edges of the page ([ceade73](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/ceade7385a7f7fbf3f553eefd22a321d8c3d83c8))
+
 ## [0.1.1](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
