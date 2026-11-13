@@ -1,0 +1,6 @@
+• Page cards: open the menu and the book becomes a strip of pages you can leaf through, upright or sideways
+• Back to where you were: after a jump along the scrubber, one tap takes you back, and forward again
+• Pages turn from taps near the edges only, so a tap in the text opens the menu
+• The book keeps its place when you turn the device
+• The Home greeting follows the time of day
+• Read is in reach on a book's page with the phone on its side
