@@ -801,6 +801,9 @@ export class Paginator extends HTMLElement {
     )
     this.#scrollToAnchor(this.#anchor)
     if (cardOptions) this.setCardMode(cardOptions)
+    // Card mode put off for a layout that can't take it (a spread, in landscape) takes it up once
+    // the page is laid out in one that can (back in portrait).
+    else if (this.#cardResume && !this.#card && !this.#crossing) this.setCardMode(this.#cardResume)
   }
   get scrolled() {
     return this.getAttribute('flow') === 'scrolled'

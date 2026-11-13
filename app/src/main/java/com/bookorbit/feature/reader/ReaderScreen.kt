@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,7 +67,8 @@ fun ReaderScreen(
     var ready by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf(false) }
     var rendererFailed by remember { mutableStateOf(false) }
-    var chromeVisible by remember { mutableStateOf(true) }
+    // Kept through a rotation: the menu (and the page cards under it) stays as the reader left it.
+    var chromeVisible by rememberSaveable { mutableStateOf(true) }
     var topBarHeight by remember { mutableIntStateOf(0) }
     var bottomBarHeight by remember { mutableIntStateOf(0) }
     var tocVisible by remember { mutableStateOf(false) }
