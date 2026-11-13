@@ -1,0 +1,2 @@
+• Smart scopes show their books again on BookOrbit server 3.7 and later
+• The reading streak and yearly goal are back on Home and in Reading stats on those servers
