@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.2.1...v0.3.0) (2026-11-20)
+
+
+### Bug Fixes
+
+* **auto:** resume unfinished audiobooks at their saved playback speed ([7ba561a](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7ba561a3f0a011b35bd123f8ed9a7fc1ae230dde))
+* **player:** open the app when the media notification is tapped ([7ba561a](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7ba561a3f0a011b35bd123f8ed9a7fc1ae230dde))
+* **reader:** keep a landscape spread together as one card while the menu is open ([7ba561a](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7ba561a3f0a011b35bd123f8ed9a7fc1ae230dde))
+* **reader:** open books on older WebViews, and report the most visible PDF page in continuous mode ([7ba561a](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7ba561a3f0a011b35bd123f8ed9a7fc1ae230dde))
+* **sync:** keep queued highlights and reading sessions across sign-out, and keep highlight edits made while a change is being sent ([7ba561a](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7ba561a3f0a011b35bd123f8ed9a7fc1ae230dde))
+
+
+### Build System
+
+* **fdroid:** build 0.3.0, and its changelog ([7af9b35](https://github.com/pranavajk1/orbiter-for-bookorbit/commit/7af9b3566fc6df1bcf5b6a7b63b1c1257010a796))
+
 ## [0.2.1](https://github.com/pranavajk1/orbiter-for-bookorbit/compare/v0.2.0...v0.2.1) (2026-11-13)
 
 
