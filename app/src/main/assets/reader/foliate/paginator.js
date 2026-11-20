@@ -783,7 +783,8 @@ export class Paginator extends HTMLElement {
     // Card mode keeps the reading column width, so every page breaks where it does when reading,
     // but spaces the pages wider apart, so each card has a margin beside its text.
     const card = this.#card
-    if (card) return { height, width: columnWidth + card.gap, margin, gap: card.gap, columnWidth }
+    // (A spread's card is the spread as it is when reading.)
+    if (card && !card.spread) return { height, width: columnWidth + card.gap, margin, gap: card.gap, columnWidth }
     return { height, width, margin, gap, columnWidth }
   }
   render() {
@@ -839,8 +840,8 @@ export class Paginator extends HTMLElement {
    * do: the page scales down into the room between the host's bars ([top] and [bottom] CSS px
    * kept clear), the pages either side show beside it, and a band of [background] between pages
    * makes each one a card. Swipes leaf through them as page turns, so the strip slides. Pass null
-   * to read again. Horizontal, left-to-right paginated layouts only (a spread shows each of its columns as a card): anything else
-   * keeps the page as it is.
+   * to read again. Horizontal, left-to-right paginated layouts only (a spread is one card, both
+   * its pages together): anything else keeps the page as it is.
    */
   setCardMode(options) {
     // Mid-turn into the next section, the outgoing one is pinned on screen: wait for it to go. And
@@ -867,32 +868,45 @@ export class Paginator extends HTMLElement {
         this.#cardResume = options
         return
       }
-      // Columns to a page: two in a spread (landscape), where each column is a page of its own
-      // and becomes a card of its own.
+      // Columns to a page: two in a spread (landscape).
       const columns = Math.max(1, Math.round(readSize / (columnWidth + gap)))
-      // Each card keeps about the margin a page has beside its text when reading, and the cards
-      // stand a band apart.
-      const inner = Math.max(gap, 16)
-      const rule = Math.max(10, Math.round(gap * 0.6))
-      const cardGap = 2 * inner + rule
-      // The column is as wide as its share of the page less its gap, exactly: that's what the layout uses
-      // (#beforeRender). The computed column-width is truncated to whole px, and a page spacing
-      // built on it drifts off the real pages a fraction of a px more on every page.
-      const size = readSize / columns - gap + cardGap
-      const pad = Math.ceil(size)
       // Above and below the text, each card carries on into the page's top and bottom margins.
       const band = Math.round(this.#margin * 0.6)
-      const page = this.page
-      this.#card = { readSize, columns, size, gap: cardGap, rule, band, pad, scale: 1, background: this.#background.style.background }
-      container.style.transition = 'none'
-      Object.assign(container.style, { margin: `-${band}px -${pad}px`, padding: `${band}px ${pad}px` })
-      // Wider apart, the pages move off centre by half the extra; this keeps them where they were.
-      container.style.transform = `translateX(${-(size - readSize) / 2}px)`
-      this.#top.classList.add('card')
-      // A spread's first column is its first card.
-      this.#relayout(page > 0 ? 1 + (page - 1) * columns : page)
-      void container.offsetWidth
-      container.style.transition = ''
+      const background = this.#background.style.background
+      if (columns > 1) {
+        // A spread stays together as one card, laid out just as it is when reading: spreads
+        // already stand a column gap apart, and the band goes down the middle of it. Nothing
+        // moves but the scale, so the spread shrinks into its card and grows back out of it,
+        // where pulling its two pages apart into cards of their own would jump mid-animation.
+        const rule = Math.max(6, Math.round(gap * 0.3))
+        this.#card = { readSize, columns: 1, spread: true, size: readSize, gap, rule, band, pad: Math.ceil(readSize), scale: 1, background }
+        container.style.transition = 'none'
+        Object.assign(container.style, { margin: `-${band}px -${this.#card.pad}px`, padding: `${band}px ${this.#card.pad}px` })
+        this.#top.classList.add('card')
+        void container.offsetWidth
+        container.style.transition = ''
+      } else {
+        // Each card keeps about the margin a page has beside its text when reading, and the cards
+        // stand a band apart.
+        const inner = Math.max(gap, 16)
+        const rule = Math.max(10, Math.round(gap * 0.6))
+        const cardGap = 2 * inner + rule
+        // The column is as wide as the page less its gap, exactly: that's what the layout uses
+        // (#beforeRender). The computed column-width is truncated to whole px, and a page spacing
+        // built on it drifts off the real pages a fraction of a px more on every page.
+        const size = readSize - gap + cardGap
+        const pad = Math.ceil(size)
+        const page = this.page
+        this.#card = { readSize, columns, size, gap: cardGap, rule, band, pad, scale: 1, background }
+        container.style.transition = 'none'
+        Object.assign(container.style, { margin: `-${band}px -${pad}px`, padding: `${band}px ${pad}px` })
+        // Wider apart, the pages move off centre by half the extra; this keeps them where they were.
+        container.style.transform = `translateX(${-(size - readSize) / 2}px)`
+        this.#top.classList.add('card')
+        this.#relayout(page)
+        void container.offsetWidth
+        container.style.transition = ''
+      }
     }
     const card = this.#card
     card.options = options
@@ -1017,7 +1031,12 @@ export class Paginator extends HTMLElement {
       this.#background.style.background = card.background
       this.#view?.document?.documentElement?.style.removeProperty('-webkit-user-select')
       if (this.#view?.element) this.#view.element.style.willChange = ''
-      if (relayout && this.#view) this.#relayout(page)
+      // A spread's card was laid out as it is when reading: there's nothing to lay out again, and
+      // doing so would flash. Scrolling to it again resets the bounds a swipe is held to.
+      if (relayout && this.#view) {
+        if (card.spread) this.#scrollToPage(page, 'anchor')
+        else this.#relayout(page)
+      }
       void container.offsetWidth
       container.style.transition = ''
     }

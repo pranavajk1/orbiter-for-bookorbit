@@ -42,7 +42,7 @@ import javax.inject.Singleton
 class MediaLibraryCallback @Inject constructor(
     @ApplicationContext private val context: Context,
     private val downloads: DownloadsRepository,
-    private val playerRepo: PlayerRepository,
+    private val playbackResolver: AutoPlaybackResolver,
     private val audioProgress: AudioProgressRepository,
     private val playerManager: PlayerManager,
     private val castProxyServer: CastProxyServer,
@@ -143,11 +143,11 @@ class MediaLibraryCallback @Inject constructor(
         val chapterRef = mediaItems.firstNotNullOfOrNull { AutoBrowseTree.parseChapterId(it.mediaId) }
         if (chapterRef != null) {
             val (chapterBookId, index) = chapterRef
-            return@future routeQueue(resolveQueue(chapterBookId, startAtChapterIndex = index)
+            return@future routeQueue(resolveQueue(mediaSession, chapterBookId, startAtChapterIndex = index)
                 ?: MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs))
         }
         val bookId = mediaItems.firstNotNullOfOrNull { AutoBrowseTree.parseBookId(it.mediaId) }
-        routeQueue(bookId?.let { resolveQueue(it) }
+        routeQueue(bookId?.let { resolveQueue(mediaSession, it) }
             ?: MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs))
     }
 
@@ -156,7 +156,7 @@ class MediaLibraryCallback @Inject constructor(
         mediaSession: MediaSession,
         controller: ControllerInfo,
     ): ListenableFuture<MediaItemsWithStartPosition> = future {
-        routeQueue(audioProgress.recent().firstNotNullOfOrNull { resolveQueue(it.bookId) }
+        routeQueue(playbackResolver.resume()?.let { adopt(mediaSession, it) }
             ?: MediaItemsWithStartPosition(emptyList(), 0, 0))
     }
 
@@ -183,30 +183,16 @@ class MediaLibraryCallback @Inject constructor(
 
     private fun current() = AutoBrowseTree.currentBookInfo(playerManager.state.value, labels())
 
-    private suspend fun resolveQueue(bookId: Int, startAtChapterIndex: Int? = null): MediaItemsWithStartPosition? {
-        val data = playerRepo.resolve(bookId) ?: return null
-        // Chapter start comes from the resolved book, not PlayerManager state (which may be cleared or stale).
-        val startAtBookSec = startAtChapterIndex?.let { i ->
-            val total = PlaybackQueue.totalDurationSec(data.files)
-            PlaybackQueue.chapterRanges(PlaybackQueue.resolveChapters(data.book, total), total).getOrNull(i)?.startSec
-        }
-        val index: Int
-        val positionMs: Long
-        if (startAtBookSec != null) {
-            val loc = PlaybackQueue.locateAbsolute(data.files, startAtBookSec)
-            index = loc.index
-            positionMs = (loc.offsetSec * 1000).toLong()
-        } else {
-            val resume = audioProgress.resolveResume(bookId)
-            index = resume
-                ?.let { data.files.indexOfFirst { f -> f.id == it.currentFileId } }
-                ?.coerceAtLeast(0) ?: 0
-            positionMs = ((resume?.positionSeconds ?: 0.0) * 1000).toLong()
-        }
-        // Seed the in-app player state so the shared progress poller reports car-started playback.
-        playerManager.adoptExternalQueue(data.book, data.files)
-        return MediaItemsWithStartPosition(data.mediaItems, index, positionMs)
+    private suspend fun resolveQueue(session: MediaSession, bookId: Int, startAtChapterIndex: Int? = null): MediaItemsWithStartPosition? {
+        return playbackResolver.resolve(bookId, startAtChapterIndex)?.let { adopt(session, it) }
     }
+
+    private suspend fun adopt(session: MediaSession, resolved: AutoPlaybackResolver.Resolved): MediaItemsWithStartPosition =
+        withContext(Dispatchers.Main.immediate) {
+            session.player.setPlaybackSpeed(resolved.speed)
+            playerManager.adoptExternalQueue(resolved.data.book, resolved.data.files, resolved.speed, resolved.speedIsPerBook)
+            MediaItemsWithStartPosition(resolved.data.mediaItems, resolved.index, resolved.positionMs)
+        }
 
     private suspend fun catalog() = downloads.downloads.first()
 

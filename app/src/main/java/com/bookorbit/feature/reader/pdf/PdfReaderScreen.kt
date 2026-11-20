@@ -64,6 +64,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
 private val PDF_BACKDROP = Color(0xFF20242A)
@@ -249,7 +250,15 @@ private fun PdfContinuous(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = ui.initialPage)
 
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            PdfLayout.mostVisiblePage(
+                pages = layout.visibleItemsInfo.map { PdfLayout.VisiblePage(it.index, it.offset, it.size) },
+                viewportStart = layout.viewportStartOffset,
+                viewportEnd = layout.viewportEndOffset,
+            )
+        }
+            .filterNotNull()
             .distinctUntilChanged()
             .collect { vm.onPageChanged(it) }
     }

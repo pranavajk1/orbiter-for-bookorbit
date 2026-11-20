@@ -1,13 +1,19 @@
 package com.bookorbit.feature.auth
 
 import com.bookorbit.core.auth.SessionManager
+import com.bookorbit.core.model.AuthUser
 import com.bookorbit.core.model.LoginOptions
+import com.bookorbit.core.model.LoginResponse
 import com.bookorbit.core.model.OidcProviderPublic
 import com.bookorbit.core.model.ServerIdentity
 import com.bookorbit.core.model.SetupStatus
 import com.bookorbit.core.network.ApiService
+import com.bookorbit.core.sync.SyncScheduler
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import java.io.IOException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerializationException
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -18,7 +24,6 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
-import java.io.IOException
 
 class AuthRepositoryTest {
 
@@ -38,7 +43,7 @@ class AuthRepositoryTest {
     @Before
     fun setUp() {
         api = mockk()
-        repo = AuthRepository(api, mockk<SessionManager>(relaxed = true), mockk(relaxed = true))
+        repo = AuthRepository(api, mockk<SessionManager>(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
     }
 
     @Test
@@ -98,5 +103,20 @@ class AuthRepositoryTest {
         coEvery { api.getServerIdentity() } throws httpError(404)
         coEvery { api.getSetupStatus() } throws httpError(404)
         repo.checkServer()
+    }
+
+    @Test
+    fun `signing in sends what was queued while signed out`() = runTest {
+        val user = AuthUser(id = 1, username = "me")
+        val api = mockk<ApiService>()
+        coEvery { api.login(any()) } returns LoginResponse("token", user)
+        val session = mockk<SessionManager>(relaxed = true)
+        every { session.dataScopeChanged() } returns false
+        val scheduler = mockk<SyncScheduler>(relaxed = true)
+
+        AuthRepository(api, session, mockk(relaxed = true), scheduler).login("me", "secret")
+
+        verify { session.signIn("token", user) }
+        verify(exactly = 1) { scheduler.schedule() }
     }
 }
