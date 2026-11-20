@@ -1,0 +1,5 @@
+• Sideways, a two-page spread stays together as one card when you open the menu, so it shrinks smoothly instead of jumping
+• Highlights and reading sessions saved offline are no longer lost when you sign out or your session expires
+• Books open on older Android WebViews, and continuous PDF mode keeps track of the page you're on
+• Tapping the media notification opens the app
+• Android Auto resumes unfinished audiobooks at their saved speed
